@@ -1,65 +1,58 @@
 import React, { useRef } from 'react'
-import VoiceButton from './VoiceButton.jsx'
 import { CONDITIONS } from '../lib/schema.js'
 import { fileToPhoto } from '../lib/db.js'
 
-// One inspection item: name, condition rating, notes (typed or dictated), and
-// attached photos (camera capture or file upload).
-export default function ItemRow({ item, onChange, onRemove }) {
+// One narrative-derived section: an auto-detected area with its verbatim
+// narrative slice (editable), a derived-but-editable condition, and photos.
+export default function SectionCard({ section, onChange, onRemove }) {
   const fileRef = useRef(null)
   const cameraRef = useRef(null)
 
-  const set = (patch) => onChange({ ...item, ...patch })
-
-  const appendNote = (chunk) => {
-    const sep = item.notes && !item.notes.endsWith(' ') ? ' ' : ''
-    set({ notes: `${item.notes || ''}${sep}${chunk}`.trim() })
-  }
+  // Editing marks the field so re-segmentation stops overwriting it.
+  const set = (patch, flags = {}) => onChange({ ...section, ...patch, ...flags })
 
   const addPhotos = async (fileList) => {
     const files = Array.from(fileList || [])
     if (!files.length) return
     const photos = []
     for (const f of files) {
-      try { photos.push(await fileToPhoto(f)) } catch (_e) { /* skip bad file */ }
+      try { photos.push(await fileToPhoto(f)) } catch (_e) { /* skip */ }
     }
-    if (photos.length) set({ photos: [...(item.photos || []), ...photos] })
+    if (photos.length) set({ photos: [...(section.photos || []), ...photos] })
   }
+  const removePhoto = (id) => set({ photos: (section.photos || []).filter((p) => p.id !== id) })
 
-  const removePhoto = (id) => set({ photos: (item.photos || []).filter((p) => p.id !== id) })
-
-  const condClass = `cond cond--${(item.condition || 'N/A').toLowerCase().replace('/', '')}`
+  const condClass = `cond cond--${(section.condition || 'N/A').toLowerCase().replace('/', '')}`
 
   return (
-    <div className="item">
-      <div className="item-head">
+    <section className="area">
+      <div className="area-head">
         <input
-          className="item-name"
-          value={item.name}
-          onChange={(e) => set({ name: e.target.value })}
-          placeholder="Item name"
+          className="area-name"
+          value={section.name}
+          onChange={(e) => set({ name: e.target.value }, { nameEdited: true })}
+          placeholder="Area name"
         />
         <select
           className={condClass}
-          value={item.condition}
-          onChange={(e) => set({ condition: e.target.value })}
+          value={section.condition}
+          onChange={(e) => set({ condition: e.target.value }, { conditionEdited: true })}
           aria-label="Condition"
         >
           {CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button type="button" className="icon-btn" onClick={onRemove} title="Remove item">✕</button>
+        <button type="button" className="icon-btn" onClick={onRemove} title="Remove section">✕</button>
       </div>
 
       <textarea
         className="item-notes"
-        value={item.notes}
-        onChange={(e) => set({ notes: e.target.value })}
-        placeholder="Notes — type or dictate…"
-        rows={2}
+        value={section.text}
+        onChange={(e) => set({ text: e.target.value }, { textEdited: true })}
+        placeholder="What was said about this area…"
+        rows={3}
       />
 
       <div className="item-actions">
-        <VoiceButton onText={appendNote} label="Dictate note" compact />
         <button type="button" className="mini-btn" onClick={() => cameraRef.current?.click()}>📷 Camera</button>
         <button type="button" className="mini-btn" onClick={() => fileRef.current?.click()}>🖼 Add photo</button>
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden
@@ -68,9 +61,9 @@ export default function ItemRow({ item, onChange, onRemove }) {
           onChange={(e) => { addPhotos(e.target.files); e.target.value = '' }} />
       </div>
 
-      {(item.photos || []).length > 0 && (
+      {(section.photos || []).length > 0 && (
         <div className="thumbs">
-          {item.photos.map((p) => (
+          {section.photos.map((p) => (
             <div key={p.id} className="thumb">
               <img src={p.dataUrl} alt={p.name} />
               <button type="button" className="thumb-x" onClick={() => removePhoto(p.id)} title="Remove photo">✕</button>
@@ -78,6 +71,6 @@ export default function ItemRow({ item, onChange, onRemove }) {
           ))}
         </div>
       )}
-    </div>
+    </section>
   )
 }

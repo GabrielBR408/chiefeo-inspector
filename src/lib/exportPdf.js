@@ -1,8 +1,8 @@
-// ChiefEO Inspector — PDF export via jsPDF.
-// Renders the shared export model. `renderPdfText` returns the plain-text lines
-// the PDF is built from (pure, no jsPDF) so the self-check can assert that the
-// PDF's content includes every item without parsing a binary PDF. The actual
-// jsPDF renderer iterates the SAME lines, so parity is guaranteed by construction.
+// ChiefEO Inspector — PDF export via jsPDF (narrative-driven).
+// Renders the shared export model. `renderPdfLines` returns the ordered content
+// fragments the PDF is built from (pure, no jsPDF) so the self-check can assert
+// the PDF's content includes every section without parsing a binary PDF. The
+// jsPDF renderer iterates the SAME fragments, so parity is guaranteed.
 
 import { buildExportModel } from './exportModel.js'
 
@@ -17,11 +17,11 @@ function condColor(condition) {
   return MUTED
 }
 
-// The ordered list of text fragments that make up the report body. Each entry is
-// { text, kind }. This is the single source of truth for PDF content and is what
-// the self-check inspects. Every item name appears here exactly once.
+// The ordered content fragments that make up the report body. Each section
+// contributes exactly one 'section' fragment (carrying its name + condition),
+// so the self-check can assert one-per-section with no extras/misses.
 export function renderPdfLines(reportOrModel) {
-  const model = reportOrModel.sections ? reportOrModel : buildExportModel(reportOrModel)
+  const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const lines = []
   lines.push({ text: 'ChiefEO Inspector', kind: 'brand' })
   lines.push({ text: model.header.title, kind: 'title' })
@@ -34,12 +34,9 @@ export function renderPdfLines(reportOrModel) {
     lines.push({ text: model.summary, kind: 'body' })
   }
   for (const section of model.sections) {
-    lines.push({ text: section.name, kind: 'h2' })
-    for (const item of section.items) {
-      lines.push({ text: `${item.name} — ${item.condition}`, kind: 'item', condition: item.condition, itemName: item.name })
-      if (item.notes) lines.push({ text: item.notes, kind: 'note' })
-      if (item.photoCount > 0) lines.push({ text: `${item.photoCount} photo(s) attached`, kind: 'photo', photos: item.photos })
-    }
+    lines.push({ text: `${section.name} — ${section.condition}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key })
+    if (section.text) lines.push({ text: section.text, kind: 'note' })
+    if (section.photoCount > 0) lines.push({ text: `${section.photoCount} photo(s) attached`, kind: 'photo', photos: section.photos })
   }
   return lines
 }
@@ -72,35 +69,42 @@ export async function downloadPdf(report, filename = 'inspection-report.pdf') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...NAVY)
       ensure(20); doc.text(ln.text, marginX, y); y += 18
       doc.setDrawColor(227, 231, 236); doc.line(marginX, y - 6, marginX + maxW, y - 6)
-    } else if (ln.kind === 'item') {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+    } else if (ln.kind === 'body') {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(...NAVY)
+      const wrapped = doc.splitTextToSize(ln.text, maxW)
+      for (const w of wrapped) { ensure(14); doc.text(w, marginX, y); y += 14 }
+    } else if (ln.kind === 'section') {
+      y += 10
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13)
+      ensure(18)
+      doc.setTextColor(...NAVY); doc.text(ln.sectionName, marginX, y)
       const [r, g, b] = condColor(ln.condition)
-      ensure(16)
-      doc.setTextColor(...NAVY); doc.text(`${ln.itemName}`, marginX, y)
-      doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + doc.getTextWidth(ln.itemName) + 6, y)
-      y += 15
+      doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + doc.getTextWidth(ln.sectionName) + 8, y)
+      y += 8
+      doc.setDrawColor(227, 231, 236); doc.line(marginX, y, marginX + maxW, y); y += 12
     } else if (ln.kind === 'note') {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED)
-      const wrapped = doc.splitTextToSize(ln.text, maxW - 12)
-      for (const w of wrapped) { ensure(13); doc.text(w, marginX + 12, y); y += 13 }
+      const wrapped = doc.splitTextToSize(ln.text, maxW)
+      for (const w of wrapped) { ensure(13); doc.text(w, marginX, y); y += 13 }
     } else if (ln.kind === 'photo') {
       const photos = ln.photos || []
-      let px = marginX + 12
+      let px = marginX
       const thumb = 84
-      for (const p of photos) {
-        if (!p || !p.dataUrl) continue
-        if (px + thumb > marginX + maxW) { px = marginX + 12; y += thumb + 8 }
-        ensure(thumb + 8)
-        try {
-          const fmt = p.dataUrl.includes('image/png') ? 'PNG' : 'JPEG'
-          doc.addImage(p.dataUrl, fmt, px, y, thumb, thumb)
-        } catch (_e) { /* skip unrenderable image */ }
-        px += thumb + 8
-      }
-      y += thumb + 10
-      if (photos.length === 0 || !photos.some((p) => p && p.dataUrl)) {
+      const renderable = photos.filter((p) => p && p.dataUrl)
+      if (renderable.length === 0) {
         doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...MUTED)
-        ensure(12); doc.text(ln.text, marginX + 12, y); y += 12
+        ensure(12); doc.text(ln.text, marginX, y); y += 14
+      } else {
+        ensure(thumb + 8)
+        for (const p of renderable) {
+          if (px + thumb > marginX + maxW) { px = marginX; y += thumb + 8; ensure(thumb + 8) }
+          try {
+            const fmt = p.dataUrl.includes('image/png') ? 'PNG' : 'JPEG'
+            doc.addImage(p.dataUrl, fmt, px, y, thumb, thumb)
+          } catch (_e) { /* skip unrenderable */ }
+          px += thumb + 8
+        }
+        y += thumb + 10
       }
     }
   }

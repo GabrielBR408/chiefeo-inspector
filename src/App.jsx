@@ -1,15 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react'
 import chiefeoLogo from './assets/chiefeo-logo.png'
-import AreaCard from './components/AreaCard.jsx'
+import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
-import { newReport, makeId } from './lib/schema.js'
-import { draftReport, tallyConditions } from './lib/draft.js'
+import { newReport } from './lib/schema.js'
+import { fileToPhoto } from './lib/db.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
+const sectionId = (key) => `sec_${key}`
+
+// Re-segment the narrative and merge with existing sections so live edits and
+// photos survive. Runs deterministically on every keystroke/dictation — no network.
+function resegment(report, narrative) {
+  const fresh = segmentNarrative(narrative)
+  return mergeSections(report.sections || [], fresh, sectionId)
+}
 
 export default function App() {
   const [report, setReport] = useState(() => newReport({ date: todayISO() }))
@@ -19,17 +28,15 @@ export default function App() {
   const [update, setUpdate] = useState(null)
   const loaded = useRef(false)
 
-  // Restore any offline-saved report on first mount.
   useEffect(() => {
     loadReport().then((saved) => {
-      if (saved && saved.areas) setReport(saved)
+      if (saved && saved.sections) setReport(saved)
       loaded.current = true
     })
     const dispose = registerPWA((apply) => setUpdate(() => apply))
     return dispose
   }, [])
 
-  // Debounced offline autosave (includes photos).
   useEffect(() => {
     if (!loaded.current) return
     const t = setTimeout(() => saveReport(report), 400)
@@ -37,33 +44,54 @@ export default function App() {
   }, [report])
 
   const setHeader = (patch) => setReport((r) => ({ ...r, ...patch }))
-  const setArea = (id, next) =>
-    setReport((r) => ({ ...r, areas: r.areas.map((a) => (a.id === id ? next : a)) }))
-  const removeArea = (id) =>
-    setReport((r) => ({ ...r, areas: r.areas.filter((a) => a.id !== id) }))
-  const addArea = () =>
-    setReport((r) => ({ ...r, areas: [...r.areas, { id: makeId('a'), name: 'New area', items: [] }] }))
+
+  // Walkthrough edits drive the section list.
+  const setWalkthrough = (text) =>
+    setReport((r) => ({ ...r, walkthrough: text, sections: resegment(r, text) }))
 
   const appendWalkthrough = (chunk) =>
     setReport((r) => {
       const sep = r.walkthrough && !r.walkthrough.endsWith(' ') ? ' ' : ''
-      return { ...r, walkthrough: `${r.walkthrough || ''}${sep}${chunk}`.trim() }
+      const text = `${r.walkthrough || ''}${sep}${chunk}`.trim()
+      return { ...r, walkthrough: text, sections: resegment(r, text) }
     })
 
+  const setSection = (id, next) =>
+    setReport((r) => ({ ...r, sections: r.sections.map((s) => (s.id === id ? next : s)) }))
+  const removeSection = (id) =>
+    setReport((r) => ({ ...r, sections: r.sections.filter((s) => s.id !== id) }))
+
+  // Unfiled photo → most recent section, or a General bucket if none yet.
+  const addUnfiledPhoto = async (fileList) => {
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+    const photos = []
+    for (const f of files) { try { photos.push(await fileToPhoto(f)) } catch (_e) { /* skip */ } }
+    if (!photos.length) return
+    setReport((r) => {
+      const sections = [...r.sections]
+      let target = sections[sections.length - 1]
+      if (!target) {
+        target = { id: sectionId('general'), key: 'general', area: 'General Observations', name: 'General Observations', text: '', condition: 'N/A', photos: [], textEdited: false, conditionEdited: false, nameEdited: false }
+        sections.push(target)
+      }
+      const idx = sections.indexOf(target)
+      sections[idx] = { ...target, photos: [...(target.photos || []), ...photos] }
+      return { ...r, sections }
+    })
+  }
+
   const onDraft = async () => {
-    setDrafting(true)
-    setDraftMsg('')
+    setDrafting(true); setDraftMsg('')
     try {
-      const { report: drafted, source } = await draftReport(report)
-      setReport(drafted)
+      const { sections, summary, source } = await analyzeNarrative(report, { makeId: sectionId })
+      setReport((r) => ({ ...r, sections, summary }))
       setDraftMsg(source === 'ai'
-        ? 'Draft generated with AI. Everything below is editable.'
-        : 'Draft generated (offline/deterministic). Everything below is editable.')
+        ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
+        : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
     } catch (_e) {
       setDraftMsg('Could not draft — please try again.')
-    } finally {
-      setDrafting(false)
-    }
+    } finally { setDrafting(false) }
   }
 
   const onExport = async (kind) => {
@@ -74,9 +102,7 @@ export default function App() {
       else await downloadDocx(report, `${base}.docx`)
     } catch (e) {
       setDraftMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
-    } finally {
-      setExporting('')
-    }
+    } finally { setExporting('') }
   }
 
   const onReset = async () => {
@@ -88,7 +114,9 @@ export default function App() {
     loaded.current = true
   }
 
-  const t = tallyConditions(report)
+  const unfiledRef = useRef(null)
+  const t = tallyConditions(report.sections)
+  const named = report.sections.filter((s) => s.key !== 'general')
 
   return (
     <main className="page">
@@ -105,9 +133,8 @@ export default function App() {
         <h1>Inspector</h1>
       </header>
 
-      <p className="hero-line">Talk it. Snap it. Draft the report.</p>
+      <p className="hero-line">Just talk. Sections appear as you go.</p>
 
-      {/* Report header */}
       <section className="step step--source">
         <div className="step-head">
           <span className="step-eyebrow">Report details</span>
@@ -125,12 +152,12 @@ export default function App() {
         </div>
       </section>
 
-      {/* Walkthrough dictation */}
+      {/* Walkthrough — the primary input; sections emerge from it */}
       <section className="step step--source">
         <div className="step-head">
           <span className="step-eyebrow">Walkthrough</span>
           <h2 className="step-title">Talk through the property</h2>
-          <p className="step-note">Dictate a running commentary. The AI draft uses this for the summary — it never invents items or ratings.</p>
+          <p className="step-note">Name an area as you go (“in the kitchen…”, “the roof…”). A section pops up for each area you mention, with what you said attached. Nothing you didn’t say is added.</p>
         </div>
         <div className="walkthrough-tools">
           <VoiceButton onText={appendWalkthrough} label="Dictate walkthrough" />
@@ -138,27 +165,37 @@ export default function App() {
         <textarea
           className="walkthrough-text"
           value={report.walkthrough}
-          onChange={(e) => setHeader({ walkthrough: e.target.value })}
-          placeholder="e.g. Starting at the exterior, the roof looks recently replaced, gutters are clear…"
-          rows={3}
+          onChange={(e) => setWalkthrough(e.target.value)}
+          placeholder="e.g. Starting at the roof — recently replaced, no issues. In the kitchen, the countertops are worn and the faucet drips. The primary bath fan is loud…"
+          rows={4}
         />
       </section>
 
-      {/* Areas & items */}
+      {/* Auto-detected sections */}
       <section className="step step--source">
         <div className="step-head">
-          <span className="step-eyebrow">Findings</span>
-          <h2 className="step-title">Areas &amp; items</h2>
+          <span className="step-eyebrow">Sections</span>
+          <h2 className="step-title">Detected from your walkthrough</h2>
           <p className="step-note">
-            {report.areas.length} areas · {t.total} items · {t.Good} Good / {t.Fair} Fair / {t.Poor} Poor / {t['N/A']} N/A
+            {named.length} area{named.length === 1 ? '' : 's'} detected · {t.Good} Good / {t.Fair} Fair / {t.Poor} Poor / {t['N/A']} N/A
           </p>
         </div>
-        <div className="areas">
-          {report.areas.map((a) => (
-            <AreaCard key={a.id} area={a} onChange={(n) => setArea(a.id, n)} onRemove={() => removeArea(a.id)} />
-          ))}
+
+        {report.sections.length === 0 ? (
+          <p className="result-empty">No sections yet — start dictating or typing your walkthrough above and areas will appear here automatically.</p>
+        ) : (
+          <div className="areas">
+            {report.sections.map((s) => (
+              <SectionCard key={s.id} section={s} onChange={(n) => setSection(s.id, n)} onRemove={() => removeSection(s.id)} />
+            ))}
+          </div>
+        )}
+
+        <div className="unfiled-photo">
+          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}>🖼 Add photo (to latest / general)</button>
+          <input ref={unfiledRef} type="file" accept="image/*" multiple hidden
+            onChange={(e) => { addUnfiledPhoto(e.target.files); e.target.value = '' }} />
         </div>
-        <button type="button" className="add-area" onClick={addArea}>+ Add area</button>
       </section>
 
       {/* Draft */}
@@ -169,7 +206,7 @@ export default function App() {
         {draftMsg && <p className="generate-msg generate-msg--info">{draftMsg}</p>}
       </section>
 
-      {/* Summary (editable) */}
+      {/* Summary */}
       <section className="step step--result">
         <div className="step-head">
           <span className="step-eyebrow">Summary</span>
@@ -202,8 +239,8 @@ export default function App() {
       </section>
 
       <footer className="site-footer">
-        <p className="site-footer-line">ChiefEO Inspector · works offline · your photos and notes stay on this device.</p>
-        <p className="site-footer-line site-footer-line--muted">AI drafting is optional and only writes prose — it never changes your ratings, items, or photos.</p>
+        <p className="site-footer-line">ChiefEO Inspector · works offline · your notes and photos stay on this device.</p>
+        <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
       </footer>
     </main>
   )

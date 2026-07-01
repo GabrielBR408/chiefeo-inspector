@@ -1,15 +1,17 @@
-// ChiefEO Inspector — headless self-check.
-// Constructs a synthetic inspection, drives the deterministic + AI-sanitizing
-// draft path and both export renderers, and asserts hard invariants. Executes
-// for real (unzips the generated DOCX, inspects the PDF content model) and
-// exits non-zero on ANY failure.
+// ChiefEO Inspector — headless self-check (narrative-driven model).
+// Drives segmentation, the AI-sanitizing analysis path, and both export
+// renderers, asserting hard invariants. Executes for real (unzips the generated
+// DOCX, inspects the PDF content model) and exits non-zero on ANY failure.
 //
 //   node scripts/self-check.mjs
 
 import zlib from 'node:zlib'
-import { CONDITIONS, isValidCondition } from '../src/lib/schema.js'
-import { draftReport, applyAIDraft, deterministicSummary, tallyConditions } from '../src/lib/draft.js'
-import { buildExportModel, exportItemIds } from '../src/lib/exportModel.js'
+import { CONDITIONS } from '../src/lib/schema.js'
+import {
+  segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
+  tallyConditions, deterministicSummary
+} from '../src/lib/segment.js'
+import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
 import { renderPdfLines } from '../src/lib/exportPdf.js'
 import { docxToBuffer } from '../src/lib/exportDocx.js'
 
@@ -19,118 +21,135 @@ function assert(name, cond, detail = '') {
   if (cond) { passed++; console.log(`  ✓ ${name}`) }
   else { failures.push(`${name}${detail ? ` — ${detail}` : ''}`); console.log(`  ✗ ${name}${detail ? ` — ${detail}` : ''}`) }
 }
+const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[.!?]+$/, '').trim()
+function faithful(narrative, sectionText) {
+  const N = norm(narrative)
+  return splitSentences(sectionText).every((sent) => N.includes(norm(sent)))
+}
 
-// --- Synthetic inspection (known ids so assertions are crisp) ---------------
-const px = (id) => ({ id, name: `${id}.jpg`, dataUrl: 'data:image/jpeg;base64,/9j/AAAA' })
-const input = {
+// --- Synthetic walkthrough narrative ----------------------------------------
+// Names five areas in order; each carries a distinct, verbatim observation with
+// a condition cue. It deliberately does NOT mention a garage/pool/attic.
+const NARRATIVE =
+  'Starting outside, the roof was recently replaced and is in good shape. ' +
+  'The kitchen countertops are worn and the faucet is leaking. ' +
+  'In the primary bath the vanity is dated with minor wear. ' +
+  'The basement shows a crack in the foundation wall and some water damage. ' +
+  'Finally, the living room paint is dated but clean.'
+
+const EXPECTED_KEYS = ['roof', 'kitchen', 'primarybathroom', 'basement', 'livingroom']
+const EXPECTED_COND = { roof: 'Good', kitchen: 'Poor', primarybathroom: 'Fair', basement: 'Poor', livingroom: 'Fair' }
+const NOT_MENTIONED = ['garage', 'attic', 'pool', 'swimming pool', 'bedroom']
+
+const baseReport = {
   property: 'Maple Court #4', address: '123 Main St, Unit 4',
   inspector: 'Jordan Vega', date: '2026-07-01',
-  walkthrough: 'Roof recently replaced. Kitchen faucet drips. Bathroom fan is loud.',
-  summary: '',
-  areas: [
-    { id: 'a1', name: 'Exterior', items: [
-      { id: 'i1', name: 'Roof / Gutters', condition: 'Good', notes: 'recently replaced', photos: [px('i1p1')] },
-      { id: 'i2', name: 'Siding / Paint', condition: 'Fair', notes: 'minor peeling', photos: [] }
-    ]},
-    { id: 'a2', name: 'Kitchen', items: [
-      { id: 'i3', name: 'Sink / Plumbing', condition: 'Poor', notes: 'faucet drips', photos: [px('i3p1'), px('i3p2')] },
-      { id: 'i4', name: 'Appliances', condition: 'N/A', notes: '', photos: [] }
-    ]},
-    { id: 'a3', name: 'Bathroom', items: [
-      { id: 'i5', name: 'Ventilation', condition: 'Fair', notes: 'fan is loud', photos: [] }
-    ]}
-  ]
-}
-const ALL_IDS = ['i1', 'i2', 'i3', 'i4', 'i5']
-const ALL_NAMES = ['Roof / Gutters', 'Siding / Paint', 'Sink / Plumbing', 'Appliances', 'Ventilation']
-const RATINGS = { i1: 'Good', i2: 'Fair', i3: 'Poor', i4: 'N/A', i5: 'Fair' }
-const TOTAL_PHOTOS = 3
-
-function idsOf(report) {
-  const out = []
-  for (const a of report.areas) for (const it of a.items) out.push(it.id)
-  return out
-}
-function itemsById(report) {
-  const m = new Map()
-  for (const a of report.areas) for (const it of a.items) m.set(it.id, it)
-  return m
+  walkthrough: NARRATIVE, summary: '', sections: []
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n[1] Deterministic draft preserves every item, rating, and photo')
+console.log('\n[1] Sections match narrated areas exactly, in first-mention order')
 {
-  const { report: out, source } = await draftReport(input, { fetchImpl: async () => ({ ok: false }) })
-  assert('falls back to deterministic when API unavailable', source === 'deterministic', source)
-  assert('same item ids, same order (none dropped/invented)', JSON.stringify(idsOf(out)) === JSON.stringify(ALL_IDS), idsOf(out).join(','))
-  const m = itemsById(out)
-  assert('ratings carried through verbatim', ALL_IDS.every((id) => m.get(id).condition === RATINGS[id]))
-  assert('every rating is a legal value', ALL_IDS.every((id) => isValidCondition(m.get(id).condition)))
-  assert('photos preserved (count unchanged)', m.get('i1').photos.length === 1 && m.get('i3').photos.length === 2 && m.get('i2').photos.length === 0)
-  assert('summary generated (non-empty)', typeof out.summary === 'string' && out.summary.length > 20)
-  // The tally has 0 items rated Excellent/none-of-that; summary must not claim ratings the tally lacks.
-  const t = tallyConditions(out)
-  assert('summary Poor-mention matches tally', (out.summary.includes('rated Poor') ? t.Poor > 0 : true))
+  const secs = segmentNarrative(NARRATIVE)
+  const keys = secs.map((s) => s.key)
+  assert('exactly the mentioned areas, in order', JSON.stringify(keys) === JSON.stringify(EXPECTED_KEYS), keys.join(','))
+  assert('one section per mentioned area (no duplicates)', new Set(keys).size === keys.length)
+  for (const nm of NOT_MENTIONED) assert(`no section for un-mentioned "${nm}"`, !keys.includes(nm.replace(/\s+/g, '')))
+  assert('every section has a display name', secs.every((s) => s.name && s.name.length > 0))
 }
 
-console.log('\n[2] AI draft is sanitized — cannot invent, drop, or re-rate items')
+console.log('\n[2] Each section\'s text is a faithful, verbatim slice of the narrative')
 {
-  // A deliberately misbehaving model response.
-  const evilAI = {
-    summary: 'Property is in great shape.',
-    items: [
-      { id: 'i3', notes: 'Kitchen faucet drips steadily; recommend cartridge replacement.', condition: 'Good' }, // tries to flip Poor->Good
-      { id: 'i1', notes: 'Roof recently replaced; no issues observed.' },
-      { id: 'GHOST', notes: 'Invented wine cellar in perfect condition.' } // invented item
-    ]
-    // note: omits i2, i4, i5 entirely — an attempt to drop them
+  const secs = segmentNarrative(NARRATIVE)
+  for (const s of secs) assert(`"${s.name}" text is verbatim from narrative`, faithful(NARRATIVE, s.text), s.text)
+  // And the specific observation lands in the right section (no cross-attribution).
+  const byKey = Object.fromEntries(secs.map((s) => [s.key, s]))
+  assert('kitchen slice mentions the faucet, not the roof', /faucet/.test(byKey.kitchen.text) && !/roof/.test(byKey.kitchen.text))
+  assert('basement slice mentions the foundation crack', /crack in the foundation/.test(byKey.basement.text))
+}
+
+console.log('\n[3] Ratings are DERIVED from each section\'s own text (not invented)')
+{
+  const secs = segmentNarrative(NARRATIVE)
+  for (const s of secs) {
+    assert(`${s.key} rating is legal`, CONDITIONS.includes(s.condition))
+    assert(`${s.key} rating matches its narrated cue (${EXPECTED_COND[s.key]})`, s.condition === EXPECTED_COND[s.key], s.condition)
   }
-  const out = applyAIDraft(input, evilAI)
-  assert('item set unchanged (no dropped, no invented)', JSON.stringify(idsOf(out)) === JSON.stringify(ALL_IDS), idsOf(out).join(','))
-  const m = itemsById(out)
-  assert('AI cannot change a rating (i3 stays Poor)', m.get('i3').condition === 'Poor', m.get('i3').condition)
-  assert('all ratings still section-driven', ALL_IDS.every((id) => m.get(id).condition === RATINGS[id]))
-  assert('AI prose lands on the right item (i3 notes updated)', /cartridge replacement/.test(m.get('i3').notes))
-  const flat = JSON.stringify(out)
-  assert('invented content is discarded', !flat.includes('wine cellar') && !flat.includes('GHOST'))
-  assert('AI summary accepted', out.summary === 'Property is in great shape.')
+  // deriveCondition is text-driven: no cue => N/A.
+  assert('no condition cue yields N/A', deriveCondition('The hallway leads to the bedrooms.') === 'N/A')
+  assert('a damage cue yields Poor', deriveCondition('there is a leak here') === 'Poor')
 }
 
-console.log('\n[3] Export model carries every item and photo, in order')
+console.log('\n[4] AI pass cannot invent an area, observation, or rating')
+{
+  // A misbehaving model: proposes a real extra area ("garage" — NOT in narrative),
+  // an invented area ("wine cellar"), and a bogus summary. The client must ignore
+  // any label the narrative doesn\'t actually contain.
+  const evilFetch = async () => ({
+    ok: true,
+    json: async () => ({ areas: ['garage', 'wine cellar', 'swimming pool'], summary: 'Everything is pristine.' })
+  })
+  const { sections, summary, source } = await analyzeNarrative(baseReport, { fetchImpl: evilFetch, makeId: (k) => `sec_${k}` })
+  assert('used the AI path', source === 'ai')
+  const keys = sections.map((s) => s.key)
+  assert('no invented area entered the report', !keys.some((k) => ['garage', 'winecellar', 'swimmingpool', 'pool'].includes(k)), keys.join(','))
+  assert('sections still equal the narrated areas', JSON.stringify(keys) === JSON.stringify(EXPECTED_KEYS), keys.join(','))
+  for (const s of sections) assert(`${s.key} text still faithful after AI pass`, faithful(NARRATIVE, s.text))
+  for (const s of sections) assert(`${s.key} rating still derived (${EXPECTED_COND[s.key]})`, s.condition === EXPECTED_COND[s.key], s.condition)
+  assert('AI summary is accepted (prose only)', summary === 'Everything is pristine.')
+}
+
+console.log('\n[5] AI-proposed label that IS in the narrative can add a section')
+{
+  // "mudroom" is not in the base vocabulary; if the narrative names it and the
+  // model surfaces it, it should become a faithful section.
+  const rep = { ...baseReport, walkthrough: NARRATIVE + ' The mudroom floor is cracked.', sections: [] }
+  const okFetch = async () => ({ ok: true, json: async () => ({ areas: ['mudroom'], summary: 'ok' }) })
+  const { sections } = await analyzeNarrative(rep, { fetchImpl: okFetch, makeId: (k) => `sec_${k}` })
+  const mud = sections.find((s) => s.key === 'mudroom')
+  assert('narrated + AI-surfaced "mudroom" becomes a section', !!mud)
+  assert('mudroom text is faithful', mud && faithful(rep.walkthrough, mud.text))
+  assert('mudroom rating derived from its text (Poor)', mud && mud.condition === 'Poor', mud && mud.condition)
+}
+
+console.log('\n[6] Deterministic fallback (no AI) segments + summarizes')
+{
+  const { sections, summary, source } = await analyzeNarrative(baseReport, { fetchImpl: async () => ({ ok: false }), makeId: (k) => `sec_${k}` })
+  assert('fell back to deterministic', source === 'deterministic')
+  assert('sections equal narrated areas', JSON.stringify(sections.map((s) => s.key)) === JSON.stringify(EXPECTED_KEYS))
+  assert('summary is non-empty', typeof summary === 'string' && summary.length > 20)
+  assert('summary lists a detected area', summary.includes('Kitchen'))
+}
+
+console.log('\n[7] Export model + DOCX + PDF contain every derived section')
 let model
 {
-  const drafted = applyAIDraft(input, { summary: deterministicSummary(input), items: [] })
-  model = buildExportModel(drafted)
-  assert('export item ids equal input ids, in order', JSON.stringify(exportItemIds(model)) === JSON.stringify(ALL_IDS))
-  assert('export itemCount matches', model.itemCount === ALL_IDS.length, String(model.itemCount))
-  assert('export photoCount matches', model.photoCount === TOTAL_PHOTOS, String(model.photoCount))
-  assert('every model rating is legal', model.sections.every((s) => s.items.every((i) => CONDITIONS.includes(i.condition))))
-}
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({ ...s, id: `sec_${s.key}`, photos: s.key === 'kitchen' ? [{ id: 'p1', name: 'k.jpg', dataUrl: 'data:image/jpeg;base64,/9j/AA' }] : [] }))
+  const report = { ...baseReport, sections: secs, summary: deterministicSummary(baseReport, secs) }
+  model = buildExportModel(report)
 
-console.log('\n[4] DOCX export contains every item, rating, and area (unzipped & inspected)')
-{
+  assert('export keys equal narrated areas, in order', JSON.stringify(exportSectionKeys(model)) === JSON.stringify(EXPECTED_KEYS))
+  assert('export sectionCount matches', model.sectionCount === EXPECTED_KEYS.length, String(model.sectionCount))
+  assert('export photoCount matches', model.photoCount === 1, String(model.photoCount))
+
   const buf = await docxToBuffer(model)
   assert('docx is a real non-trivial buffer', Buffer.isBuffer(buf) && buf.length > 1000, String(buf.length))
   const xml = unzipEntry(buf, 'word/document.xml')
-  for (const name of ALL_NAMES) assert(`docx contains item "${name}"`, xml.includes(name))
-  for (const id of ALL_IDS) assert(`docx shows rating for ${id} (${RATINGS[id]})`, xml.includes(RATINGS[id]))
-  for (const area of ['Exterior', 'Kitchen', 'Bathroom']) assert(`docx contains area "${area}"`, xml.includes(area))
-  assert('docx contains the summary text', xml.includes('reviewed'))
-}
+  for (const s of model.sections) assert(`docx contains section "${s.name}"`, xml.includes(s.name))
+  for (const s of model.sections) assert(`docx shows ${s.key} rating (${s.condition})`, xml.includes(s.condition))
+  assert('docx contains a narrated observation (faucet)', xml.includes('faucet'))
+  assert('docx does NOT contain an un-mentioned area (garage)', !xml.toLowerCase().includes('garage'))
 
-console.log('\n[5] PDF content model contains every item exactly once, plus its photos')
-{
   const lines = renderPdfLines(model)
-  const itemLines = lines.filter((l) => l.kind === 'item')
-  assert('one PDF item line per item (no extra/missing)', itemLines.length === ALL_IDS.length, String(itemLines.length))
-  for (const name of ALL_NAMES) assert(`PDF renders item "${name}"`, itemLines.some((l) => l.itemName === name))
-  assert('PDF item lines carry the section-driven rating', itemLines.every((l) => CONDITIONS.includes(l.condition)))
+  const secLines = lines.filter((l) => l.kind === 'section')
+  assert('one PDF section fragment per section', secLines.length === EXPECTED_KEYS.length, String(secLines.length))
+  for (const s of model.sections) assert(`PDF renders section "${s.name}"`, secLines.some((l) => l.sectionName === s.name))
+  assert('PDF section fragments carry a legal rating', secLines.every((l) => CONDITIONS.includes(l.condition)))
   const photoLines = lines.filter((l) => l.kind === 'photo')
-  const itemsWithPhotos = model.sections.reduce((n, s) => n + s.items.filter((i) => i.photoCount > 0).length, 0)
-  assert('PDF emits a photo block per item-with-photos', photoLines.length === itemsWithPhotos, `${photoLines.length} vs ${itemsWithPhotos}`)
+  assert('PDF emits a photo block for the section with a photo', photoLines.length === 1, String(photoLines.length))
 }
 
-// --- Minimal ZIP entry reader (inflate a single stored/deflated file) -------
+// --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1
   for (let i = buf.length - 22; i >= 0; i--) { if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break } }
@@ -160,13 +179,13 @@ function unzipEntry(buf, name) {
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n' + '='.repeat(60))
+console.log('\n' + '='.repeat(64))
 if (failures.length) {
   console.log(`FAIL — ${passed} passed, ${failures.length} failed:`)
   for (const f of failures) console.log(`   ✗ ${f}`)
-  console.log('='.repeat(60))
+  console.log('='.repeat(64))
   process.exit(1)
 }
-console.log(`PASS — all ${passed} assertions held. Exports preserve every item, rating, and photo.`)
-console.log('='.repeat(60))
+console.log(`PASS — all ${passed} assertions held. Sections come only from the narrative; nothing is invented.`)
+console.log('='.repeat(64))
 process.exit(0)

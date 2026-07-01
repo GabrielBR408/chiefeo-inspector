@@ -17,18 +17,26 @@ deterministic fallback so the app works with no key.
 
 ## Features
 
-- **Voice**: live client-side transcription via the Web Speech API — dictate a
-  walkthrough, or dictate directly into any item's notes. Manual typing always
-  works as a fallback.
-- **Photos**: camera capture or file upload, attached per item, downscaled and
-  stored offline in IndexedDB.
-- **Report structure** (Happy Inspector-style): property / address / inspector /
-  date header; areas (sections); per-item name, condition rating
-  (Good / Fair / Poor / N/A), notes, and photos; an overall summary. Everything
-  is editable before export.
-- **AI draft**: turns the walkthrough + rated items into an overall summary and
-  lightly cleaned per-item notes. It is hard-constrained (prompt **and** a
-  client-side sanitizer) to never invent, drop, or re-rate an item.
+- **Narrative-driven sections**: there are no pre-set areas/items. As you dictate
+  or type the walkthrough, a section **pops up automatically** for each area you
+  name ("kitchen", "roof", "primary bath", "garage", …), with the part of the
+  narrative you said about it attached. A section exists only if the narrative
+  referenced its area — no empty pre-set sections.
+- **Voice**: live client-side transcription via the Web Speech API drives the
+  walkthrough. Manual typing always works as a fallback.
+- **Faithful by construction**: each section's text is a **verbatim slice** of the
+  narrative (the sentences assigned to that area), and its condition rating is
+  **derived** from that slice (keyword, severity Poor > Fair > Good, else N/A) —
+  never invented. Everything stays editable.
+- **Photos**: camera capture or file upload, downscaled and stored offline in
+  IndexedDB; attach to a section, or use "Add photo" to file it under the latest /
+  a General section.
+- **AI pass (optional)**: when `ANTHROPIC_API_KEY` is set, the serverless
+  `api/draft.js` only proposes extra *area labels* (better synonym handling, e.g.
+  "mudroom") and writes the overall summary. The client feeds those labels in as
+  extra vocabulary, so a label only yields a section if it actually appears in the
+  narrative — the AI can never inject an invented area, observation, or rating.
+  Without a key it segments + summarizes deterministically.
 - **Export**: client-side **PDF** (jsPDF) and **editable .docx** (`docx`), both
   built from one shared export model.
 
@@ -53,11 +61,13 @@ model for real):
 
 | # | Invariant |
 |---|-----------|
-| 1 | Deterministic draft preserves every item, rating, and photo (none dropped/invented) |
-| 2 | AI draft is sanitized — it cannot invent, drop, or re-rate items; ratings stay section-driven |
-| 3 | Export model carries every item and photo, in order |
-| 4 | DOCX export (unzipped) contains every item, rating, and area |
-| 5 | PDF content model contains every item exactly once, plus its photos |
+| 1 | Sections match the narrated areas exactly, in first-mention order — no section for an un-mentioned area |
+| 2 | Each section's text is a faithful, verbatim slice of the narrative (no fabricated observations) |
+| 3 | Ratings are derived from each section's own text, never invented |
+| 4 | The AI pass cannot invent an area, observation, or rating (a label only counts if the narrative names it) |
+| 5 | An AI-proposed label that *is* in the narrative can add a faithful section |
+| 6 | Deterministic fallback (no AI) still segments + summarizes |
+| 7 | Export model + DOCX (unzipped) + PDF content model contain every derived section |
 
 ## Deploy (Vercel)
 

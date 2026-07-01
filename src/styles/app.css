@@ -134,6 +134,12 @@ textarea { width: 100%; resize: vertical; }
   font-size: 0.7rem; line-height: 1; cursor: pointer;
 }
 
+.result-empty {
+  margin: 0; padding: 1rem 1.1rem; border: 1px dashed var(--line);
+  border-radius: 8px; color: var(--muted); font-size: 0.88rem; background: #fafbfc;
+}
+.unfiled-photo { margin-top: 1rem; }
+
 /* Generate / export */
 .generate-btn {
   width: 100%; padding: 0.85rem 1rem; border: none; border-radius: 8px;

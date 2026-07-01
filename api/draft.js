@@ -1,45 +1,37 @@
 // Vercel serverless function — POST /api/draft.
-// Turns a structured inspection (walkthrough transcript + rated items) into an
-// editable report: an overall summary and optional polished per-item notes.
+// Narrative-driven: given the inspector's walkthrough narrative, returns
+//   { areas: ["kitchen", "primary bath", ...], summary: "..." }
+// where `areas` are VERBATIM area/place phrases the narrative names (the client
+// uses these only to detect sections — it always builds each section's text as a
+// real slice of the narrative and derives ratings itself), and `summary` is a
+// short prose overview.
 //
-// The AI writes PROSE ONLY. It is instructed to echo every item id back and to
-// never touch ratings/photos/the item set; the client (src/lib/draft.js
-// applyAIDraft) additionally enforces this, so a misbehaving model cannot drop,
-// invent, or re-rate an item. When ANTHROPIC_API_KEY is unset or the call
-// fails, we return a deterministic summary so the app still works.
+// The client (src/lib/segment.js) treats `areas` as extra vocabulary: a label
+// only yields a section if it actually appears in the narrative, so the AI can
+// never invent an area, observation, or rating. When ANTHROPIC_API_KEY is unset
+// or the call fails, we return no areas + a deterministic summary and the client
+// segments deterministically.
 //
-// Set ANTHROPIC_API_KEY in the Vercel project env for AI drafting.
+// Set ANTHROPIC_API_KEY in the Vercel project env to enable the AI pass.
 
 export const config = { api: { bodyParser: true } }
 
 const SYSTEM_PROMPT =
-  'You are drafting a residential/commercial property inspection report from an ' +
-  "inspector's spoken walkthrough and a list of already-rated items. " +
-  'You write PROSE ONLY. Hard rules: ' +
-  '(1) Do NOT invent items, areas, findings, or measurements that are not present in the input. ' +
-  '(2) Do NOT change, add, or remove any condition rating — ratings are fixed by the inspector. ' +
-  '(3) You may lightly clean up the wording of an item\'s notes for grammar/clarity, but only using ' +
-  'information already in that item\'s notes or the walkthrough; never fabricate detail. ' +
-  '(4) Reference every item by the exact id given. ' +
-  'Return STRICT JSON of the form ' +
-  '{"summary": "one short paragraph overview of the property condition based only on the ' +
-  'ratings and walkthrough", "items": [{"id": "<id>", "notes": "<cleaned notes or empty>"}]}. ' +
-  'The summary must not state a rating the tally does not support.'
+  'You extract structure from a property inspector\'s spoken walkthrough. ' +
+  'Given the narrative, do TWO things and return STRICT JSON: ' +
+  '{"areas": [..], "summary": ".."}. ' +
+  '"areas": the list of distinct rooms/areas/places the narrative EXPLICITLY names ' +
+  '(e.g. "kitchen", "roof", "primary bath", "garage", "mudroom"), as short lowercase ' +
+  'phrases copied verbatim from the narrative, in order of first mention. ' +
+  'Do NOT include an area the narrative does not name. Do NOT invent areas. ' +
+  '"summary": one short paragraph overview of the property\'s condition based ONLY on ' +
+  'what the narrative says — do not add findings, figures, or areas that are not in the narrative.'
 
 function deterministicSummary(body) {
-  const t = body.tally || {}
-  const areas = Array.isArray(body.areas) ? body.areas : []
-  const total = t.total || 0
-  const parts = []
   const where = body.address || body.property || 'the property'
+  const parts = []
   parts.push(`${body.inspector ? `${body.inspector} inspected` : 'Inspection of'} ${where}${body.date ? ` on ${body.date}` : ''}.`)
-  parts.push(`${areas.length} area(s) and ${total} item(s) were reviewed.`)
-  const flags = []
-  if (t.Poor) flags.push(`${t.Poor} rated Poor`)
-  if (t.Fair) flags.push(`${t.Fair} rated Fair`)
-  if (t.Good) flags.push(`${t.Good} rated Good`)
-  if (flags.length) parts.push(`${flags.join(', ')}.`)
-  if (t.Poor) parts.push('Items rated Poor should be prioritized for follow-up.')
+  parts.push('Summary generated from the walkthrough narrative.')
   return parts.join(' ')
 }
 
@@ -50,26 +42,23 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
   const body = req.body || {}
+  const narrative = typeof body.narrative === 'string' ? body.narrative : ''
   const apiKey = process.env.ANTHROPIC_API_KEY
 
-  // Deterministic fallback — no key configured.
-  if (!apiKey) {
-    return json(res, 200, { summary: deterministicSummary(body), items: [], source: 'deterministic' })
+  if (!apiKey || !narrative.trim()) {
+    return json(res, 200, { areas: [], summary: deterministicSummary(body), source: 'deterministic' })
   }
 
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk')
     const client = new Anthropic({ apiKey })
     const userContent =
-      JSON.stringify({
-        property: body.property, address: body.address, inspector: body.inspector,
-        date: body.date, walkthrough: body.walkthrough, tally: body.tally, areas: body.areas
-      }) +
+      JSON.stringify({ property: body.property, address: body.address, inspector: body.inspector, date: body.date, narrative }) +
       '\n\nReturn ONLY the JSON object described in the system prompt.'
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
+      max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }]
     })
@@ -79,16 +68,16 @@ export default async function handler(req, res) {
     let parsed
     try { parsed = JSON.parse(jsonText) } catch (_e) { parsed = null }
     if (!parsed || typeof parsed !== 'object') {
-      return json(res, 200, { summary: deterministicSummary(body), items: [], source: 'deterministic' })
+      return json(res, 200, { areas: [], summary: deterministicSummary(body), source: 'deterministic' })
     }
     return json(res, 200, {
+      areas: Array.isArray(parsed.areas) ? parsed.areas.filter((a) => typeof a === 'string').slice(0, 40) : [],
       summary: typeof parsed.summary === 'string' ? parsed.summary : deterministicSummary(body),
-      items: Array.isArray(parsed.items) ? parsed.items : [],
       source: 'ai'
     })
   } catch (err) {
     console.log('[draft] API call failed — deterministic fallback:', String(err && err.message ? err.message : err))
-    return json(res, 200, { summary: deterministicSummary(body), items: [], source: 'deterministic' })
+    return json(res, 200, { areas: [], summary: deterministicSummary(body), source: 'deterministic' })
   }
 }
 
