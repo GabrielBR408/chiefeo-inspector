@@ -1,8 +1,9 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "VITE_BASE=/chiefeoinspector/ npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
+    { "source": "/chiefeoinspector/(.*)", "destination": "/$1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
