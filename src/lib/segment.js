@@ -7,12 +7,21 @@
 // narrative (the sentences assigned to that area), and its condition rating is
 // DERIVED from that slice — never invented.
 //
+// Dictation usually has NO periods, so a whole utterance can be one run-on
+// "sentence". iOS speech recognition still capitalizes each new spoken sentence
+// ("…fix that There is a leak…"), so we split a run-on unit at area-keyword
+// TRANSITIONS whenever a real clause cue (a capitalized word or a strong starter
+// like "there/then/next/and") sits between the two areas. If two area words share
+// one clause with no cue between them ("a crack in the foundation wall"), we do
+// NOT split — that avoids false sections for component words used as modifiers.
+//
 // GUARANTEES (asserted by scripts/self-check.mjs):
 //   1. Every area the narrative mentions yields exactly one section (in order
 //      of first mention); no section exists for an area the narrative never named.
-//   2. Each section's text is faithful: every sentence in it appears verbatim in
-//      the narrative — no fabricated observations.
+//   2. Each section's text is faithful: every unit in it appears verbatim in the
+//      narrative — no fabricated observations.
 //   3. Ratings are derived from the section's own text, not invented.
+//   4. Run-on, unpunctuated multi-area dictation splits into one section per area.
 
 import { CONDITIONS } from './schema.js'
 
@@ -31,6 +40,10 @@ const AREA_DEFS = [
   ['Deck / Patio', ['deck', 'patio', 'porch', 'balcony']],
   ['Yard', ['yard', 'lawn', 'landscaping', 'backyard', 'front yard']],
   ['Entry / Foyer', ['foyer', 'entryway', 'entry', 'front door']],
+  ['Lobby', ['lobby']],
+  ['Elevator', ['elevator']],
+  ['Mechanical Room', ['mechanical room', 'boiler room', 'utility closet']],
+  ['Parking', ['parking garage', 'parking lot', 'parking']],
   ['Living Room', ['living room', 'family room', 'great room']],
   ['Dining Room', ['dining room', 'dining area']],
   ['Kitchen', ['kitchen']],
@@ -78,21 +91,97 @@ function buildAliases(extraLabels = []) {
 
 function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 
-// Find the area named earliest in a sentence, if any.
-function detectArea(sentence, aliases) {
-  const lc = sentence.toLowerCase()
-  let best = null
+// Position modifiers folded into an area name/key when they immediately precede
+// an alias, so "south lobby" and "north lobby" become distinct sections named
+// "South Lobby" / "North Lobby".
+const MODIFIERS = new Set([
+  'north', 'south', 'east', 'west', 'upstairs', 'downstairs', 'front', 'back', 'rear',
+  'main', 'lower', 'upper', 'primary', 'master', 'guest', 'first', 'second', 'third',
+  '1st', '2nd', '3rd', 'left', 'right'
+])
+
+// Strong clause-starter words that, like a capitalized word, mark a new clause
+// mid-run-on. Used only to decide WHERE to split between two different areas.
+const STRONG_STARTERS = new Set([
+  'there', 'then', 'next', 'also', 'additionally', 'moving', 'move', 'heading', 'head',
+  'over', 'now', 'finally', 'plus', 'and'
+])
+
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
+
+// All non-overlapping area anchors in `text`, in order, with position modifiers
+// captured. Each anchor: { start, end, area, key, name }.
+function findAllAreas(text, aliases) {
+  const lc = text.toLowerCase()
+  const found = []
   for (const entry of aliases) {
-    const re = new RegExp(`\\b${escapeRegExp(entry.alias)}\\b`)
-    const m = re.exec(lc)
-    if (m) {
-      const idx = m.index
-      if (!best || idx < best.idx || (idx === best.idx && entry.alias.length > best.alias.length)) {
-        best = { ...entry, idx }
-      }
+    const re = new RegExp(`\\b${escapeRegExp(entry.alias)}\\b`, 'g')
+    let m
+    while ((m = re.exec(lc)) !== null) {
+      found.push({ start: m.index, end: m.index + entry.alias.length, area: entry.area, key: entry.key, aliasLen: entry.alias.length })
     }
   }
-  return best
+  found.sort((a, b) => a.start - b.start || b.aliasLen - a.aliasLen)
+  const anchors = []
+  let lastEnd = -1
+  for (const f of found) {
+    if (f.start >= lastEnd) { anchors.push(f); lastEnd = f.end }
+  }
+  for (const a of anchors) {
+    const before = text.slice(0, a.start)
+    const mm = before.match(/([A-Za-z0-9]+)(\s+)$/)
+    if (mm && MODIFIERS.has(mm[1].toLowerCase())) {
+      a.start -= mm[0].length
+      a.area = `${cap(mm[1].toLowerCase())} ${a.area}`
+      a.key = slugify(`${mm[1]} ${a.key}`)
+    }
+    a.name = a.area
+  }
+  return anchors
+}
+
+// The first area anchor in a piece of text, or null.
+function findArea(text, aliases) {
+  const anchors = findAllAreas(text, aliases)
+  return anchors.length ? anchors[0] : null
+}
+
+// Index of the LAST clause cue (capitalized word or strong starter) whose start
+// lies in [from, to); -1 if none. Picking the last cue keeps follow-up text with
+// the earlier area.
+function lastCue(text, from, to) {
+  const re = /\S+/g
+  re.lastIndex = Math.max(0, from)
+  let last = -1
+  let m
+  while ((m = re.exec(text)) !== null) {
+    if (m.index >= to) break
+    if (m.index < from) continue
+    const w = m[0]
+    const lw = w.toLowerCase().replace(/[^a-z]/g, '')
+    if (/^[A-Z]/.test(w) || STRONG_STARTERS.has(lw)) last = m.index
+  }
+  return last
+}
+
+// Split one unit at area-keyword transitions that have a clause cue between them.
+// No cue between two areas => no split (conservative; avoids "foundation wall").
+function splitUnitAtAreaTransitions(unitText, aliases) {
+  const anchors = findAllAreas(unitText, aliases)
+  if (anchors.length < 2) return [unitText]
+  const cuts = new Set([0, unitText.length])
+  for (let i = 1; i < anchors.length; i++) {
+    if (anchors[i].key === anchors[i - 1].key) continue
+    const cue = lastCue(unitText, anchors[i - 1].end, anchors[i].start)
+    if (cue > 0) cuts.add(cue)
+  }
+  const bounds = [...cuts].sort((a, b) => a - b)
+  const parts = []
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const p = unitText.slice(bounds[i], bounds[i + 1]).trim()
+    if (p) parts.push(p)
+  }
+  return parts.length ? parts : [unitText]
 }
 
 // Split narrative into trimmed, non-empty sentences (verbatim substrings).
@@ -130,35 +219,41 @@ export function deriveCondition(text) {
 // 'general' section holds any text before the first named area (only if present).
 export function segmentNarrative(text, extraLabels = []) {
   const aliases = buildAliases(extraLabels)
-  const sentences = splitSentences(text)
+
+  // 1. Punctuation splits into sentences; 2. each is split at area-keyword
+  //    transitions that carry a clause cue (handles unpunctuated dictation).
+  const units = []
+  for (const sentence of splitSentences(text)) {
+    units.push(...splitUnitAtAreaTransitions(sentence, aliases))
+  }
 
   const order = []          // section keys in first-mention order
-  const byKey = new Map()   // key -> { key, area, name, sentences: [] }
+  const byKey = new Map()   // key -> { key, area, name, parts: [] }
   let current = null        // current section key
 
-  const ensure = (key, area) => {
+  const ensure = (key, area, name) => {
     if (!byKey.has(key)) {
-      byKey.set(key, { key, area, name: area, sentences: [] })
+      byKey.set(key, { key, area, name: name || area, parts: [] })
       order.push(key)
     }
     return byKey.get(key)
   }
 
-  for (const sentence of sentences) {
-    const hit = detectArea(sentence, aliases)
+  for (const unit of units) {
+    const hit = findArea(unit, aliases)
     if (hit) {
       current = hit.key
-      ensure(hit.key, hit.area).sentences.push(sentence)
+      ensure(hit.key, hit.area, hit.name).parts.push(unit)
     } else if (current) {
-      byKey.get(current).sentences.push(sentence)
+      byKey.get(current).parts.push(unit)
     } else {
-      ensure('general', 'General Observations').sentences.push(sentence)
+      ensure('general', 'General Observations').parts.push(unit)
     }
   }
 
   return order.map((key) => {
     const s = byKey.get(key)
-    const body = s.sentences.join(' ')
+    const body = s.parts.join(' ')
     return { key: s.key, area: s.area, name: s.name, text: body, condition: deriveCondition(body) }
   })
 }

@@ -149,6 +149,31 @@ let model
   assert('PDF emits a photo block for the section with a photo', photoLines.length === 1, String(photoLines.length))
 }
 
+console.log('\n[8] Run-on, UNPUNCTUATED multi-area dictation splits into one section per area')
+{
+  // The real iPhone repro: no periods; iOS capitalizes the new spoken sentence.
+  const REPRO = 'The south lobby has trees growing in it so have Billy fix that There is a leak in the basement'
+  const secs = segmentNarrative(REPRO)
+  const keys = secs.map((s) => s.key)
+  assert('splits into exactly two sections', secs.length === 2, keys.join(','))
+  assert('sections are South Lobby then Basement', JSON.stringify(keys) === JSON.stringify(['southlobby', 'basement']), keys.join(','))
+  const byKey = Object.fromEntries(secs.map((s) => [s.key, s]))
+  assert('South Lobby text is the lobby clause (with follow-up), verbatim',
+    byKey.southlobby && byKey.southlobby.text === 'The south lobby has trees growing in it so have Billy fix that',
+    byKey.southlobby && byKey.southlobby.text)
+  assert('Basement text is the basement clause, verbatim',
+    byKey.basement && byKey.basement.text === 'There is a leak in the basement',
+    byKey.basement && byKey.basement.text)
+  assert('both slices are faithful to the narrative', secs.every((s) => faithful(REPRO, s.text)))
+  assert('Basement observation did NOT leak into South Lobby', !/leak in the basement/.test(byKey.southlobby.text))
+  assert('South Lobby display name carries the modifier', byKey.southlobby.name === 'South Lobby', byKey.southlobby.name)
+  assert('basement rating derived (Poor from "leak")', byKey.basement.condition === 'Poor', byKey.basement.condition)
+
+  // Regression guard: a component word inside one clause must NOT split (no cue).
+  const oneClause = segmentNarrative('The basement shows a crack in the foundation wall and some water damage.')
+  assert('component word "foundation" does not spawn a false section', oneClause.length === 1 && oneClause[0].key === 'basement', oneClause.map((s) => s.key).join(','))
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1
