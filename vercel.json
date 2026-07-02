@@ -2,6 +2,9 @@
   "buildCommand": "VITE_BASE=/chiefeoinspector/ npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "redirects": [
+    { "source": "/", "destination": "/chiefeoinspector/", "permanent": false }
+  ],
   "rewrites": [
     { "source": "/chiefeoinspector/(.*)", "destination": "/$1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
