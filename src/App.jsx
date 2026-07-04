@@ -12,6 +12,13 @@ import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
 
+// BRAND: absolute link back to the chiefeotool.com hub, shown at the top of the
+// page. Set only in the branded ChiefEO build; the white-label mirror sets this
+// to null so the button never renders there (keeps App.jsx otherwise identical
+// between the two repos). Absolute URL so it returns to the hub whether the app
+// is opened via the chiefeotool.com/chiefeoinspector path or its bare Vercel URL.
+const HUB_URL = 'https://chiefeotool.com/'
+
 // LOCAL calendar date — not toISOString(), which is UTC and rolls to tomorrow
 // during evening inspections in any timezone west of Greenwich.
 const todayISO = () => {
@@ -205,6 +212,7 @@ export default function App() {
 
   return (
     <main className="page">
+      {HUB_URL && <a className="back-to-hub" href={HUB_URL}>← All Tools</a>}
       {update && (
         <div className="update-banner">
           <span className="update-banner-text">A new version is available.</span>
