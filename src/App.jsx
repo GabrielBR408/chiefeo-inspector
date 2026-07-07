@@ -19,6 +19,10 @@ import { track } from './lib/track.js'
 // is opened via the chiefeotool.com/chiefeoinspector path or its bare Vercel URL.
 const HUB_URL = 'https://chiefeotool.com/'
 
+// Build stamp injected by Vite (vite.config.js define). The typeof guard keeps
+// this file importable anywhere the define isn't applied.
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
+
 // LOCAL calendar date — not toISOString(), which is UTC and rolls to tomorrow
 // during evening inspections in any timezone west of Greenwich.
 const todayISO = () => {
@@ -373,6 +377,7 @@ export default function App() {
       <footer className="site-footer">
         <p className="site-footer-line">ChiefEO Inspector · works offline · your notes and photos stay on this device.</p>
         <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
+        <p className="site-footer-line site-footer-line--muted">{APP_VERSION}</p>
       </footer>
     </main>
   )
