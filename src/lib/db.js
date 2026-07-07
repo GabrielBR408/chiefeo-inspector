@@ -20,6 +20,10 @@ function open() {
   })
 }
 
+// Returns true when the report persisted, false when it could not (no
+// IndexedDB, storage quota exceeded, private-mode restrictions). Persistence is
+// still best-effort — it never throws — but the caller can now WARN the user
+// instead of silently losing an inspection when the device runs out of space.
 export async function saveReport(report) {
   try {
     const db = await open()
@@ -30,7 +34,8 @@ export async function saveReport(report) {
       tx.onerror = () => reject(tx.error)
     })
     db.close()
-  } catch (_e) { /* offline persistence is best-effort */ }
+    return true
+  } catch (_e) { return false }
 }
 
 export async function loadReport() {

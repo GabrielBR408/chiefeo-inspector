@@ -58,11 +58,27 @@ export default function App() {
   useEffect(() => {
     track('app_opened')
     loadReport().then((saved) => {
-      if (saved && saved.sections) setReport(saved)
+      // Only restore if the user hasn't already started working — IndexedDB
+      // resolves async, and a fast typist's first keystrokes must never be
+      // clobbered by a late-arriving restore of the previous report.
+      const cur = reportRef.current
+      const untouched = !cur.walkthrough && cur.sections.length === 0 && !cur.property && !cur.address && !cur.inspector
+      if (saved && saved.sections && untouched) setReport(saved)
       loaded.current = true
     })
     const dispose = registerPWA((apply) => setUpdate(() => apply))
-    return dispose
+    // Flush the debounced save when the tab hides/closes so the last ~400ms of
+    // typing or dictation is never lost to a sudden app switch (common in the
+    // field: dictate, then jump straight to the camera app).
+    const flush = () => { if (loaded.current) saveReport(reportRef.current) }
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush() }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibility)
+      dispose()
+    }
   }, [])
 
   // Fire once per change in detected-section count (not on every keystroke).
@@ -73,9 +89,16 @@ export default function App() {
     }
   }, [report.sections.length])
 
+  const [saveFailed, setSaveFailed] = useState(false)
   useEffect(() => {
     if (!loaded.current) return
-    const t = setTimeout(() => saveReport(report), 400)
+    const t = setTimeout(async () => {
+      const ok = await saveReport(report)
+      setSaveFailed((prev) => {
+        if (!ok && !prev) track('error', { reason: 'save_failed' })
+        return !ok
+      })
+    }, 400)
     return () => clearTimeout(t)
   }, [report])
 
@@ -182,6 +205,12 @@ export default function App() {
   }
 
   const onExport = async (kind) => {
+    // A truly empty report exports as a blank page — confusing, not useful.
+    // Point back to the walkthrough instead. Any content at all still exports.
+    if (!report.sections.length && !(report.walkthrough || '').trim() && !(report.summary || '').trim()) {
+      setExportMsg('Nothing to export yet — dictate or type your walkthrough above and sections will appear.')
+      return
+    }
     setExporting(kind)
     setExportMsg('')
     try {
@@ -217,7 +246,12 @@ export default function App() {
         <div className="update-banner">
           <span className="update-banner-text">A new version is available.</span>
           <button className="update-banner-btn" onClick={() => update()}>Reload</button>
-          <button className="update-banner-dismiss" onClick={() => setUpdate(null)}>×</button>
+          <button className="update-banner-dismiss" onClick={() => setUpdate(null)} aria-label="Dismiss update notice">×</button>
+        </div>
+      )}
+      {saveFailed && (
+        <div className="save-warning" role="alert">
+          Couldn't save your report to this device — storage may be full. Export a PDF or Word copy now so nothing is lost.
         </div>
       )}
 
@@ -289,7 +323,7 @@ export default function App() {
         )}
 
         <div className="unfiled-photo">
-          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}>🖼 Add photo (to current area)</button>
+          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo (to current area)</button>
           <input ref={unfiledRef} type="file" accept="image/*" multiple hidden
             onChange={(e) => { addUnfiledPhoto(e.target.files); e.target.value = '' }} />
         </div>
@@ -298,7 +332,7 @@ export default function App() {
       {/* Draft */}
       <section className="step step--generate">
         <button className="generate-btn" onClick={onDraft} disabled={drafting}>
-          {drafting ? 'Drafting…' : '✨ Draft report'}
+          {drafting ? 'Drafting…' : <><span aria-hidden="true">✨</span> Draft report</>}
         </button>
         {draftMsg && <p className="generate-msg generate-msg--info">{draftMsg}</p>}
       </section>
@@ -326,10 +360,10 @@ export default function App() {
         </div>
         <div className="export-actions">
           <button className="export-btn" onClick={() => onExport('pdf')} disabled={!!exporting}>
-            {exporting === 'pdf' ? 'Preparing PDF…' : '⬇ PDF'}
+            {exporting === 'pdf' ? 'Preparing PDF…' : <><span aria-hidden="true">⬇</span> PDF</>}
           </button>
           <button className="export-btn export-btn--secondary" onClick={() => onExport('docx')} disabled={!!exporting}>
-            {exporting === 'docx' ? 'Preparing DOCX…' : '⬇ Editable Word (.docx)'}
+            {exporting === 'docx' ? 'Preparing DOCX…' : <><span aria-hidden="true">⬇</span> Editable Word (.docx)</>}
           </button>
         </div>
         {exportMsg && <p className="generate-msg generate-msg--info">{exportMsg}</p>}

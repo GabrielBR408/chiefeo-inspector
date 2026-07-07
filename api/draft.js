@@ -14,6 +14,8 @@
 //
 // Set ANTHROPIC_API_KEY in the Vercel project env to enable the AI pass.
 
+import { allowRequest, clientIp, tooMany } from './_ratelimit.js'
+
 export const config = { api: { bodyParser: true } }
 
 const SYSTEM_PROMPT =
@@ -41,6 +43,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST')
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
+  if (!allowRequest(clientIp(req))) return tooMany(res)
   const body = req.body || {}
   // Cap inputs: this endpoint is publicly reachable, so unbounded text would be
   // an open invitation to burn API credits. A real walkthrough fits well inside
