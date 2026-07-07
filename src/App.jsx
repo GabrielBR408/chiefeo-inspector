@@ -4,7 +4,7 @@ import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport } from './lib/db.js'
@@ -139,6 +139,38 @@ export default function App() {
       applyDetails(p)
     } catch (_e) { /* deterministic fill already applied live */ }
   }
+
+  // --- Background area scan ---------------------------------------------------
+  // The built-in directory splits instantly; this fills its gaps. A few seconds
+  // after the walkthrough settles (and on every push-to-talk release), the FULL
+  // narrative is scanned by the AI for area labels the directory doesn't know
+  // ("coffee shop", "loading dock", tenant names). Learned labels extend live
+  // segmentation exactly like the Draft pass — a label only becomes a section
+  // if the narrative actually says it, and the summary is never touched.
+  const lastScan = useRef({ len: 0, at: 0 })
+  const scanForAreas = async () => {
+    const text = (reportRef.current.walkthrough || '').trim()
+    if (text.length < 30) return
+    const now = Date.now()
+    // Budget: skip if barely anything changed, and never more than ~3/min.
+    if (Math.abs(text.length - lastScan.current.len) < 15) return
+    if (now - lastScan.current.at < 20000) return
+    lastScan.current = { len: text.length, at: now }
+    const labels = await proposeAreaLabels(text)
+    if (!labels.length) return
+    setReport((r) => {
+      const merged = [...new Set([...(r.aiAreas || []), ...labels])]
+      if (merged.length === (r.aiAreas || []).length) return r
+      track('area_labels_learned', { count: merged.length - (r.aiAreas || []).length })
+      const next = { ...r, aiAreas: merged }
+      return { ...next, sections: resegment(next, next.walkthrough) }
+    })
+  }
+  useEffect(() => {
+    if (!loaded.current) return
+    const t = setTimeout(scanForAreas, 3000)
+    return () => clearTimeout(t)
+  }, [report.walkthrough])
 
   // Walkthrough edits drive the section list.
   const setWalkthrough = (text) =>
@@ -292,10 +324,10 @@ export default function App() {
         <div className="step-head">
           <span className="step-eyebrow">Walkthrough</span>
           <h2 className="step-title">Talk through the property</h2>
-          <p className="step-note">Name an area as you go (“in the kitchen…”, “the roof…”). A section pops up for each area you mention, with what you said attached. Nothing you didn’t say is added.</p>
+          <p className="step-note">Name an area as you go (“in the kitchen…”, “the roof…”). A section pops up for each area you mention, with what you said attached — uncommon area names are picked up automatically a few seconds after you pause. Nothing you didn’t say is added.</p>
         </div>
         <div className="walkthrough-tools">
-          <VoiceButton onText={appendWalkthrough} label="Hold to dictate walkthrough" source="walkthrough" />
+          <VoiceButton onText={appendWalkthrough} onStop={scanForAreas} label="Hold to dictate walkthrough" source="walkthrough" />
         </div>
         <textarea
           className="walkthrough-text"

@@ -9,7 +9,7 @@
 // output), so a limited user loses nothing but the AI polish.
 
 const WINDOW_MS = 10 * 60 * 1000 // 10-minute sliding window
-const MAX_PER_WINDOW = 30 // generous for a human; hostile loops hit it fast
+const MAX_PER_WINDOW = 60 // covers background area scans during heavy dictation; hostile loops still hit it fast
 
 const hits = new Map() // ip -> [timestamps]
 

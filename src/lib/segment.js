@@ -462,6 +462,28 @@ export function apiUrl(path) {
   return `${base}${path}`
 }
 
+// --- Background area scan (faithfulness-safe) --------------------------------
+// Asks the serverless endpoint for area LABELS ONLY across the whole narrative.
+// Same guarantee as the Draft pass: a returned label is merely vocabulary — it
+// yields a section only if it actually appears verbatim in the narrative, so
+// the AI can never inject an area. Returns [] on any failure (offline, no key,
+// rate-limited) — the deterministic directory keeps working regardless.
+export async function proposeAreaLabels(narrative, { fetchImpl } = {}) {
+  const doFetch = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null)
+  const text = String(narrative || '')
+  if (!doFetch || !text.trim()) return []
+  try {
+    const res = await doFetch(apiUrl('api/draft'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ narrative: text, labelsOnly: true })
+    })
+    if (!res || !res.ok) return []
+    const data = await res.json()
+    return Array.isArray(data.areas) ? data.areas.filter((a) => typeof a === 'string') : []
+  } catch (_e) { return [] }
+}
+
 // --- LLM analysis (faithfulness-safe) ---------------------------------------
 // Calls the serverless /api/draft with the narrative and returns
 // { sections, summary, source }. The LLM only proposes extra area labels and a
