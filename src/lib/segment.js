@@ -61,8 +61,13 @@ const AREA_DEFS = [
   ['Office', ['office', 'reception', 'reception area', 'front desk', 'cubicle', 'workstation']],
   ['Conference Room', ['conference room', 'meeting room', 'boardroom', 'board room']],
   ['Break Room', ['break room', 'breakroom', 'kitchenette', 'lunch room', 'lunchroom']],
-  ['Men\'s Restroom', ['men\'s restroom', 'mens restroom', 'men\'s room', 'mens room']],
-  ['Women\'s Restroom', ['women\'s restroom', 'womens restroom', 'women\'s room', 'womens room', 'ladies room', 'ladies\' room']],
+  ['Coffee Shop', ['coffee shop', 'coffee bar', 'cafe']],
+  ['Restaurant', ['restaurant', 'food court', 'diner']],
+  ['Gift Shop', ['gift shop']],
+  ['Retail', ['retail space', 'retail suite', 'retail']],
+  ['Terminal', ['terminal']],
+  ['Men\'s Restroom', ['men\'s restroom', 'mens restroom', 'men\'s room', 'mens room', 'men\'s bathroom', 'mens bathroom']],
+  ['Women\'s Restroom', ['women\'s restroom', 'womens restroom', 'women\'s room', 'womens room', 'ladies room', 'ladies\' room', 'women\'s bathroom', 'womens bathroom', 'ladies bathroom']],
   ['Restroom', ['restroom', 'rest room', 'washroom']],
   ['Server Room', ['server room', 'it room', 'data room', 'telecom room', 'idf', 'mdf']],
   ['Janitor Closet', ['janitor closet', 'janitorial', 'custodial closet', 'custodial']],
@@ -114,7 +119,7 @@ function buildAliases(extraLabels = []) {
   for (const label of extraLabels) {
     const clean = String(label || '').trim()
     if (!clean) continue
-    const alias = clean.toLowerCase()
+    const alias = clean.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/\u00e9/g, 'e')
     if (flat.some((f) => f.alias === alias)) continue
     // Title-case the label for display.
     const area = clean.replace(/\b\w/g, (c) => c.toUpperCase())
@@ -159,7 +164,10 @@ const REF_PREP_RE = /\b(?:near|by|beside|behind|above|below|under|underneath|ove
 // All non-overlapping area anchors in `text`, in order, with position modifiers
 // captured. Each anchor: { start, end, area, key, name }.
 function findAllAreas(text, aliases) {
-  const lc = text.toLowerCase()
+  // iOS dictation emits curly apostrophes ("men\u2019s bathroom") and users type
+  // "caf\u00e9" — normalize to the straight/ASCII forms the alias table uses. Every
+  // replacement is 1 char -> 1 char, so anchor indexes stay aligned with `text`.
+  const lc = text.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/\u00e9/g, 'e')
   const found = []
   for (const entry of aliases) {
     const re = entry.re // precompiled in buildAliases; shared, so reset state

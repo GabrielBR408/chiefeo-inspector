@@ -120,6 +120,7 @@ textarea { width: 100%; resize: vertical; }
   font-weight: 600; cursor: pointer;
 }
 .voice-btn--sm { font-size: 0.78rem; padding: 0.35rem 0.6rem; }
+.voice-btn { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .voice-btn:hover { background: #e8f3f9; border-color: #bcd9ea; }
 .voice-btn--on { background: #fdecea; border-color: #e6c8c0; color: var(--danger); }
 .voice-dot { width: 0.55rem; height: 0.55rem; border-radius: 999px; background: currentColor; flex: none; }

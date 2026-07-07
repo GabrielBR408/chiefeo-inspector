@@ -270,10 +270,10 @@ export default function App() {
         <div className="step-head">
           <span className="step-eyebrow">Report details</span>
           <h2 className="step-title">Property &amp; inspector</h2>
-          <p className="step-note">Type below, or dictate — e.g. “Property is Maple Court Apartments, 123 Main St Unit 4, inspector Jane Doe, today.” Only what you say fills in.</p>
+          <p className="step-note">Type below, or hold the mic and dictate — e.g. “Property is Maple Court Apartments, 123 Main St Unit 4, inspector Jane Doe, today.” Only what you say fills in.</p>
         </div>
         <div className="walkthrough-tools">
-          <VoiceButton onText={onDetailsChunk} onStop={onDetailsStop} label="Dictate details" source="details" />
+          <VoiceButton onText={onDetailsChunk} onStop={onDetailsStop} label="Hold to dictate details" source="details" />
         </div>
         <div className="header-grid">
           <label className="hg"><span>Property</span>
@@ -295,7 +295,7 @@ export default function App() {
           <p className="step-note">Name an area as you go (“in the kitchen…”, “the roof…”). A section pops up for each area you mention, with what you said attached. Nothing you didn’t say is added.</p>
         </div>
         <div className="walkthrough-tools">
-          <VoiceButton onText={appendWalkthrough} label="Dictate walkthrough" source="walkthrough" />
+          <VoiceButton onText={appendWalkthrough} label="Hold to dictate walkthrough" source="walkthrough" />
         </div>
         <textarea
           className="walkthrough-text"
