@@ -292,8 +292,13 @@ export default function App() {
       )}
 
       <header className="masthead">
-        <img className="brand-logo" src={chiefeoLogo} alt="ChiefEO" />
-        <h1>Inspector</h1>
+        <div className="masthead-brand">
+          <img className="brand-logo" src={chiefeoLogo} alt="ChiefEO" />
+          <h1>Inspector</h1>
+        </div>
+        <button type="button" className="new-inspection-btn" onClick={onReset}>
+          <span aria-hidden="true">+</span> New inspection
+        </button>
       </header>
 
       <p className="hero-line">Just talk. Sections appear as you go.</p>

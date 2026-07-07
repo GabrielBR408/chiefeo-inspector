@@ -34,8 +34,15 @@ body {
 .back-to-hub:hover { color: var(--accent-ink); text-decoration: underline; }
 
 /* ChiefEO brand lockup */
+.masthead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .brand-logo { display: block; height: 36px; width: auto; margin: 0 0 0.4rem; border-radius: 6px; }
-.masthead h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 1rem; }
+.masthead h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+.new-inspection-btn {
+  border: 1px solid #bcd9ea; background: #fff; color: var(--accent-ink);
+  font: inherit; font-weight: 600; font-size: 0.85rem; padding: 0.45rem 0.8rem;
+  border-radius: 8px; cursor: pointer; white-space: nowrap;
+}
+.new-inspection-btn:hover { background: #e8f3f9; }
 
 .hero-line {
   text-align: center; font-size: 1.6rem; font-weight: 700; line-height: 1.25;
@@ -77,8 +84,12 @@ textarea { width: 100%; resize: vertical; }
 .areas { display: flex; flex-direction: column; gap: 1rem; }
 .area { border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem; background: #fafbfc; }
 .area-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.7rem; }
-.area-name { flex: 1; font-weight: 700; font-size: 1rem; border-color: transparent; background: transparent; padding: 0.25rem 0.35rem; }
+.area-name { flex: 1; min-width: 0; font-weight: 700; font-size: 1rem; border-color: transparent; border-bottom: 1px dashed var(--line); border-radius: 6px 6px 0 0; background: transparent; padding: 0.25rem 0.35rem; }
 .area-name:hover, .area-name:focus { border-color: var(--line); background: #fff; }
+/* Touch screens have no hover to reveal editability — always read as an input. */
+@media (pointer: coarse) {
+  .area-name { border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+}
 .area-items { display: flex; flex-direction: column; gap: 0.7rem; }
 
 /* Item */
