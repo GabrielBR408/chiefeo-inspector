@@ -43,6 +43,17 @@ body {
   border-radius: 8px; cursor: pointer; white-space: nowrap;
 }
 .new-inspection-btn:hover { background: #e8f3f9; }
+.masthead-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; }
+.masthead-msg { margin: -0.4rem 0 0.8rem; font-size: 0.85rem; color: var(--accent-ink); font-weight: 600; }
+
+/* Saved-inspections library */
+.saved-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.6rem 0.9rem; margin-bottom: 1rem; }
+.saved-toggle { border: none; background: none; color: var(--accent-ink); font: inherit; font-weight: 600; font-size: 0.9rem; cursor: pointer; padding: 0.2rem 0; }
+.saved-group { margin-top: 0.5rem; }
+.saved-prop { margin: 0 0 0.25rem; font-weight: 700; font-size: 0.85rem; color: var(--ink); }
+.saved-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.3rem 0; border-top: 1px solid var(--line); }
+.saved-meta { font-size: 0.82rem; color: var(--muted); }
+.saved-actions { display: flex; gap: 0.35rem; align-items: center; }
 
 .hero-line {
   text-align: center; font-size: 1.6rem; font-weight: 700; line-height: 1.25;

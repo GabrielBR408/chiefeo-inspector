@@ -7,7 +7,7 @@ import { fileToPhoto } from './lib/db.js'
 import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
-import { saveReport, loadReport, clearReport } from './lib/db.js'
+import { saveReport, loadReport, clearReport, saveInspection, listSavedInspections, loadInspection, deleteInspection } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
@@ -261,6 +261,58 @@ export default function App() {
     } finally { setExporting('') }
   }
 
+  // --- Saved inspections library ----------------------------------------------
+  const [saved, setSaved] = useState([])
+  const [showSaved, setShowSaved] = useState(false)
+  const [libMsg, setLibMsg] = useState('')
+  useEffect(() => { listSavedInspections().then(setSaved) }, [])
+
+  const onSaveInspection = async () => {
+    let property = (report.property || '').trim()
+    if (!property) {
+      property = (window.prompt('Which property is this inspection for?') || '').trim()
+      if (!property) return
+      setHeader({ property })
+    }
+    const id = await saveInspection({ ...report, property })
+    if (id) {
+      if (!report.savedId) setReport((r) => ({ ...r, savedId: id }))
+      setSaved(await listSavedInspections())
+      setLibMsg(`Saved under “${property}”.`)
+      track('inspection_saved')
+    } else {
+      setLibMsg('Could not save — storage may be full. Export a copy to be safe.')
+      track('error', { reason: 'inspection_save_failed' })
+    }
+  }
+
+  const onOpenInspection = async (id) => {
+    const hasWork = (report.walkthrough || '').trim() || report.sections.length > 0
+    if (hasWork && !window.confirm('Open this saved inspection? It will replace what is on screen. (Save the current one first if you want to keep it.)')) return
+    const r = await loadInspection(id)
+    if (!r) { setLibMsg('Could not open that inspection.'); return }
+    setReport(r)
+    setShowSaved(false)
+    setLibMsg('')
+    setDraftMsg('')
+    track('inspection_opened')
+  }
+
+  const onDeleteInspection = async (id) => {
+    if (!window.confirm('Delete this saved inspection? This cannot be undone.')) return
+    await deleteInspection(id)
+    setSaved(await listSavedInspections())
+    // If the open report was this saved entry, detach it so re-saving creates a fresh one.
+    setReport((r) => (r.savedId === id ? { ...r, savedId: undefined } : r))
+    track('inspection_deleted')
+  }
+
+  const savedByProperty = saved.reduce((acc, m) => {
+    const key = m.property || m.address || 'Untitled property'
+    ;(acc[key] = acc[key] || []).push(m)
+    return acc
+  }, {})
+
   const onReset = async () => {
     if (!window.confirm('Start a new inspection? This clears the current one.')) return
     await clearReport()
@@ -296,10 +348,42 @@ export default function App() {
           <img className="brand-logo" src={chiefeoLogo} alt="ChiefEO" />
           <h1>Inspector</h1>
         </div>
-        <button type="button" className="new-inspection-btn" onClick={onReset}>
-          <span aria-hidden="true">+</span> New inspection
-        </button>
+        <div className="masthead-actions">
+          <button type="button" className="new-inspection-btn" onClick={onReset}>
+            <span aria-hidden="true">+</span> New inspection
+          </button>
+          <button type="button" className="new-inspection-btn" onClick={onSaveInspection}>
+            Save inspection
+          </button>
+        </div>
       </header>
+
+      {libMsg && <p className="masthead-msg" role="status">{libMsg}</p>}
+
+      {saved.length > 0 && (
+        <section className="saved-panel">
+          <button type="button" className="saved-toggle" onClick={() => setShowSaved((v) => !v)} aria-expanded={showSaved}>
+            Saved inspections ({saved.length}) <span aria-hidden="true">{showSaved ? '▴' : '▾'}</span>
+          </button>
+          {showSaved && Object.keys(savedByProperty).sort((a, b) => a.localeCompare(b)).map((prop) => (
+            <div key={prop} className="saved-group">
+              <p className="saved-prop">{prop}</p>
+              {savedByProperty[prop].map((m) => (
+                <div key={m.id} className="saved-row">
+                  <span className="saved-meta">
+                    {m.date || '—'} · {m.sections} area{m.sections === 1 ? '' : 's'} · {m.photos} photo{m.photos === 1 ? '' : 's'}
+                    {report.savedId === m.id ? ' · open now' : ''}
+                  </span>
+                  <span className="saved-actions">
+                    <button type="button" className="mini-btn" onClick={() => onOpenInspection(m.id)}>Open</button>
+                    <button type="button" className="icon-btn" onClick={() => onDeleteInspection(m.id)} title="Delete saved inspection" aria-label={`Delete saved inspection for ${prop}`}>✕</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
+      )}
 
       <p className="hero-line">Just talk. Sections appear as you go.</p>
 
