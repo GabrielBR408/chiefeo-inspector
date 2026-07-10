@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import chiefeoLogo from './assets/chiefeo-logo.png'
 import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
+import FeedbackWidget from './components/FeedbackWidget.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
 import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys } from './lib/segment.js'
@@ -11,6 +12,7 @@ import { saveReport, loadReport, clearReport } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
+import { APP_VERSION, COMMIT_SHA } from './lib/buildInfo.js'
 
 // BRAND: absolute link back to the chiefeotool.com hub, shown at the top of the
 // page. Set only in the branded ChiefEO build; the white-label mirror sets this
@@ -209,6 +211,11 @@ export default function App() {
   const named = report.sections.filter((s) => s.key !== 'general')
   // Tally the same set the "areas detected" count describes.
   const t = tallyConditions(named)
+  // The "screen" attached to feedback: this is a single-page app, so the
+  // closest analog is the area currently under discussion (the last one
+  // mentioned in the walkthrough), falling back to 'main'.
+  const fbKey = lastMentionedKey(report.walkthrough || '', report.aiAreas || [])
+  const fbScreen = (fbKey && (report.sections.find((s) => s.key === fbKey) || {}).name) || 'main'
 
   return (
     <main className="page">
@@ -339,7 +346,10 @@ export default function App() {
       <footer className="site-footer">
         <p className="site-footer-line">ChiefEO Inspector · works offline · your notes and photos stay on this device.</p>
         <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
+        <p className="site-footer-line site-footer-line--muted">v{APP_VERSION} · {COMMIT_SHA}</p>
       </footer>
+
+      <FeedbackWidget screen={fbScreen} drafting={drafting} />
     </main>
   )
 }
