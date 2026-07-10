@@ -30,7 +30,11 @@ export function buildExportModel(report) {
     sections,
     sectionCount: sections.length,
     photoCount: sections.reduce((n, s) => n + s.photoCount, 0),
-    followUpCount: sections.filter((s) => s.followUp).length
+    followUpCount: sections.filter((s) => s.followUp).length,
+    // The single punch list, in section order: a section belongs on it if the
+    // user FLAGGED it OR it rates Poor (a Poor area is dispatchable work whether
+    // or not anyone remembered to flag it). Both exporters render exactly these.
+    followUps: sections.filter((s) => s.followUp || s.condition === 'Poor')
   }
 }
 
