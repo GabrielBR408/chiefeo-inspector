@@ -1,0 +1,16 @@
+import { chromium } from 'playwright'
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' })
+const ctx = await browser.newContext()
+const page = await ctx.newPage()
+await ctx.route('**/dsmbppzvembacitwdrsj.supabase.co/**', (r) => r.fulfill({ status: 201, body: '' }))
+// Delay the draft API so the drafting state is observable
+await ctx.route('**/api/draft', async (r) => { await new Promise((res) => setTimeout(res, 1500)); r.fulfill({ status: 404, body: '' }) })
+await page.goto('http://localhost:4173')
+await page.waitForSelector('.wordmark')
+await page.fill('textarea.walkthrough-text', 'The lobby is clean.')
+await page.click('button.generate-btn')
+const disabled = await page.waitForFunction(() => document.querySelector('button.generate-btn').disabled, null, { timeout: 1000 }).then(() => true).catch(() => false)
+console.log('draft button disables during draft:', disabled)
+const label = await page.textContent('button.generate-btn')
+console.log('label while drafting:', label.trim())
+await browser.close()
