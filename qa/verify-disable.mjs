@@ -6,7 +6,7 @@ await ctx.route('**/dsmbppzvembacitwdrsj.supabase.co/**', (r) => r.fulfill({ sta
 // Delay the draft API so the drafting state is observable
 await ctx.route('**/api/draft', async (r) => { await new Promise((res) => setTimeout(res, 1500)); r.fulfill({ status: 404, body: '' }) })
 await page.goto('http://localhost:4173')
-await page.waitForSelector('.wordmark')
+await page.waitForSelector('.brand-logo')
 await page.fill('textarea.walkthrough-text', 'The lobby is clean.')
 await page.click('button.generate-btn')
 const disabled = await page.waitForFunction(() => document.querySelector('button.generate-btn').disabled, null, { timeout: 1000 }).then(() => true).catch(() => false)

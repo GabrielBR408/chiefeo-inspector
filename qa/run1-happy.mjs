@@ -15,8 +15,8 @@ page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message))
 await ctx.route('**/dsmbppzvembacitwdrsj.supabase.co/**', (r) => r.fulfill({ status: 201, body: '' }))
 
 await page.goto(BASE)
-await page.waitForSelector('.wordmark')
-check('app loads with wordmark', true)
+await page.waitForSelector('.brand-logo')
+check('app loads with brand-logo', true)
 
 // Details fields
 await page.fill('input[placeholder="e.g. Maple Court Apartments"]', '350 Rhode Island North')
@@ -75,7 +75,7 @@ check('saved panel appears with count', /Saved inspections \(1\)/.test(savedTogg
 
 // Persistence across reload
 await page.reload()
-await page.waitForSelector('.wordmark')
+await page.waitForSelector('.brand-logo')
 await page.waitForTimeout(600)
 const wtAfter = await page.inputValue('textarea.walkthrough-text')
 check('report persists across reload', wtAfter === narrative)

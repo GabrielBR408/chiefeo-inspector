@@ -142,7 +142,10 @@ export async function saveInspection(report) {
       address: report.address || '',
       date: report.date || '',
       savedAt: Date.now(),
-      sections: (report.sections || []).length,
+      // Count named areas only — mirrors the on-screen "areas detected" tally,
+      // which excludes the uncounted "General Observations" bucket (key
+      // 'general'). Keeps the library's "N areas" consistent with the app.
+      sections: (report.sections || []).filter((s) => s.key !== 'general').length,
       photos: (report.sections || []).reduce((n, s) => n + ((s.photos || []).length), 0)
     }
     const db = await open()

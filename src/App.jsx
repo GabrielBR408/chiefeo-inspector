@@ -289,6 +289,13 @@ export default function App() {
   useEffect(() => { listSavedInspections().then(setSaved) }, [])
 
   const onSaveInspection = async () => {
+    // Guard against saving an empty report — same check the export flow uses
+    // (hasExportContent). Prevents junk library entries with 0 areas / 0 photos.
+    if (!hasExportContent) {
+      setLibMsg('Nothing to save yet — dictate or type your walkthrough above and sections will appear.')
+      track('error', { reason: 'inspection_save_empty' })
+      return
+    }
     let property = (report.property || '').trim()
     if (!property) {
       property = (window.prompt('Which property is this inspection for?') || '').trim()
@@ -359,6 +366,17 @@ export default function App() {
   const fbKey = lastMentionedKey(report.walkthrough || '', report.aiAreas || [])
   const fbScreen = (fbKey && (report.sections.find((s) => s.key === fbKey) || {}).name) || 'main'
 
+  // INS-03: which area the next "Add photo (to current area)" tap will file under.
+  // Mirrors addUnfiledPhoto: the last-mentioned area if it has a section, else the
+  // General Observations bucket (existing, or one that will be created on tap).
+  const photoTargetKey = (() => {
+    const key = lastMentionedKey(report.walkthrough || '', report.aiAreas || [])
+    if (key && report.sections.some((s) => s.key === key)) return key
+    return report.sections.some((s) => s.key === 'general') ? 'general' : null
+  })()
+  const photoTargetSection = photoTargetKey ? report.sections.find((s) => s.key === photoTargetKey) : null
+  const photoTargetName = photoTargetSection ? photoTargetSection.name : 'General Observations'
+
   return (
     <main className="page">
       {HUB_URL && <a className="back-to-hub" href={HUB_URL}>← All Tools</a>}
@@ -384,8 +402,8 @@ export default function App() {
           <button type="button" className="new-inspection-btn" onClick={onReset}>
             <span aria-hidden="true">+</span> New inspection
           </button>
-          <button type="button" className="new-inspection-btn" onClick={onSaveInspection}>
-            Save inspection
+          <button type="button" className="save-inspection-btn" onClick={onSaveInspection}>
+            <span aria-hidden="true">💾</span> Save inspection
           </button>
         </div>
       </header>
@@ -475,13 +493,14 @@ export default function App() {
         ) : (
           <div className="areas">
             {report.sections.map((s) => (
-              <SectionCard key={s.id} section={s} onChange={(n) => setSection(s.id, n)} onRemove={() => removeSection(s.id)} />
+              <SectionCard key={s.id} section={s} current={s.key === photoTargetKey} onChange={(n) => setSection(s.id, n)} onRemove={() => removeSection(s.id)} />
             ))}
           </div>
         )}
 
         <div className="unfiled-photo">
-          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo (to current area)</button>
+          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo</button>
+          <span className="unfiled-target" aria-live="polite">→ files under <strong>{photoTargetName}</strong></span>
           <input ref={unfiledRef} type="file" accept="image/*" multiple hidden
             onChange={(e) => { addUnfiledPhoto(e.target.files); e.target.value = '' }} />
         </div>
@@ -489,9 +508,11 @@ export default function App() {
 
       {/* Draft */}
       <section className="step step--generate">
-        <button className="generate-btn" onClick={onDraft} disabled={drafting}>
+        <button className="generate-btn" onClick={onDraft} disabled={drafting}
+          title="Sections and ratings already fill in as you talk — this AI-polishes them into a written summary and cleaner prose. Your observations, areas, and ratings are never changed.">
           {drafting ? 'Drafting…' : <><span aria-hidden="true">✨</span> Draft report</>}
         </button>
+        <p className="generate-hint">Sections and ratings already appear as you talk — this polishes them into a written summary and cleaner prose (observations, areas, and ratings stay as you left them).</p>
         {draftMsg && <p className="generate-msg generate-msg--info">{draftMsg}</p>}
       </section>
 

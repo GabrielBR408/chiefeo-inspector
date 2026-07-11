@@ -5,7 +5,7 @@ import { track } from '../lib/track.js'
 
 // One narrative-derived section: an auto-detected area with its verbatim
 // narrative slice (editable), a derived-but-editable condition, and photos.
-export default function SectionCard({ section, onChange, onRemove }) {
+export default function SectionCard({ section, onChange, onRemove, current = false }) {
   const fileRef = useRef(null)
   const cameraRef = useRef(null)
 
@@ -26,7 +26,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
   const condClass = `cond cond--${(section.condition || 'N/A').toLowerCase().replace('/', '')}`
 
   return (
-    <section className="area">
+    <section className={`area${current ? ' area--current' : ''}`}>
       <div className="area-head">
         <input
           className="area-name"
@@ -35,6 +35,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
           onChange={(e) => set({ name: e.target.value }, { nameEdited: true })}
           placeholder="Area name"
         />
+        {current && <span className="area-current-badge" title="New “Add photo” taps file here">Current</span>}
         <select
           className={condClass}
           value={section.condition}

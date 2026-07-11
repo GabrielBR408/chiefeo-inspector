@@ -14,7 +14,7 @@ let dialogAction = 'accept'
 page.on('dialog', (d) => { dialogs.push({ type: d.type(), msg: d.message() }); dialogAction === 'accept' ? d.accept('Prompted Property') : d.dismiss() })
 
 await page.goto(BASE)
-await page.waitForSelector('.wordmark')
+await page.waitForSelector('.brand-logo')
 
 // 1) Section edits survive continued typing
 await page.fill('textarea.walkthrough-text', 'The kitchen sink leaks.')
@@ -185,7 +185,7 @@ await page.waitForTimeout(200)
 await page.fill('textarea.walkthrough-text', 'The attic has mold everywhere.')
 await page.waitForTimeout(700) // > 400ms debounce
 await page.reload()
-await page.waitForSelector('.wordmark')
+await page.waitForSelector('.brand-logo')
 await page.waitForTimeout(600)
 const wtRace = await page.inputValue('textarea.walkthrough-text')
 check('debounced save persists before reload', wtRace === 'The attic has mold everywhere.', wtRace)
