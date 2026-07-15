@@ -6,6 +6,7 @@ import FeedbackWidget from './components/FeedbackWidget.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
 import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels, prefixHash } from './lib/segment.js'
+import { coverageGaps } from './lib/exportModel.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { downloadCsv, downloadJson } from './lib/exportData.js'
@@ -346,15 +347,38 @@ export default function App() {
   }, {})
 
   const onReset = async () => {
-    if (!window.confirm('Start a new inspection? This clears the current one.')) return
+    // Guard against silently discarding unsaved work. If there is anything on
+    // screen worth keeping, snapshot it to the saved-inspections library BEFORE
+    // clearing, so "+ New inspection" can never permanently lose an inspection.
+    const hasWork = report.sections.length > 0 || !!(report.walkthrough || '').trim() || !!(report.summary || '').trim()
+    let snapshotMsg = ''
+    if (hasWork) {
+      const proceed = window.confirm(
+        'Start a new inspection?\n\nYour current inspection will be saved to "Saved inspections" first so nothing is lost, then the screen will clear.'
+      )
+      if (!proceed) return
+      const snapId = await saveInspection(report)
+      if (snapId) {
+        setSaved(await listSavedInspections())
+        snapshotMsg = `Previous inspection saved under “${report.property || report.address || 'Untitled property'}.” Open it anytime from Saved inspections.`
+      } else {
+        // Snapshot failed (storage full / private mode): do NOT clear unsaved
+        // work — warn instead so the user can export a copy first.
+        setLibMsg('Couldn’t save the current inspection (storage may be full). Export a PDF or Word copy first, then start a new one.')
+        track('error', { reason: 'reset_snapshot_failed' })
+        return
+      }
+    }
     await clearReport()
     loaded.current = false
     setReport(newReport({ date: todayISO() }))
     // Clear every transient message — a stale "Saved under …" / "Nothing to
     // export yet" from the PREVIOUS inspection is misinformation on a fresh one.
+    // The one exception is the snapshot confirmation, which tells the user where
+    // their just-cleared work went, so keep it.
     setDraftMsg('')
     setExportMsg('')
-    setLibMsg('')
+    setLibMsg(snapshotMsg)
     loaded.current = true
   }
 
@@ -362,6 +386,9 @@ export default function App() {
   const named = report.sections.filter((s) => s.key !== 'general')
   // Tally the same set the "areas detected" count describes.
   const t = tallyConditions(named)
+  // Major systems the walkthrough never mentioned — shown as a coverage note so
+  // the free-form model's silence on a system isn't read as a clean bill.
+  const gaps = coverageGaps(report.walkthrough)
   const flaggedCount = report.sections.filter((s) => s.followUp).length
   // The "screen" attached to feedback: this is a single-page app, so the
   // closest analog is the area currently under discussion (the last one
@@ -501,6 +528,12 @@ export default function App() {
           </div>
         )}
 
+        {report.sections.length > 0 && gaps.length > 0 && (
+          <p className="coverage-note" role="note">
+            <strong>Not mentioned in this walkthrough:</strong> {gaps.join(', ')}. These major systems aren’t covered — say a word about each, or note that they weren’t inspected, before sharing this report.
+          </p>
+        )}
+
         <div className="unfiled-photo">
           <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo</button>
           <span className="unfiled-target" aria-live="polite">→ files under <strong>{photoTargetName}</strong></span>
@@ -560,8 +593,8 @@ export default function App() {
       </section>
 
       <footer className="site-footer">
-        <p className="site-footer-line">ChiefEO Inspector · works offline · your notes and photos stay on this device.</p>
-        <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
+        <p className="site-footer-line">ChiefEO Inspector · works offline · your photos stay on this device. When you’re online, your typed/spoken notes are sent to our server only to suggest area labels and a summary — never your photos.</p>
+        <p className="site-footer-line site-footer-line--muted">Sections and their text are built only from what you said — the AI never invents observations or areas. Condition ratings are auto-suggested from your words (shown “auto-suggested” until you confirm), so review them before sharing.</p>
         <p className="site-footer-line site-footer-line--muted">{APP_VERSION}</p>
       </footer>
 

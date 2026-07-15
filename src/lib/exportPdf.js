@@ -36,6 +36,15 @@ export function renderPdfLines(reportOrModel) {
     lines.push({ text: 'Summary', kind: 'h2' })
     lines.push({ text: model.summary, kind: 'body' })
   }
+  // Coverage note: major systems the walkthrough never named. Placed up top so
+  // an owner sees the scope limits before reading area-by-area findings.
+  if (model.coverageGaps && model.coverageGaps.length) {
+    lines.push({ text: 'Coverage note', kind: 'h2' })
+    lines.push({
+      text: `This walkthrough did not mention the following major systems, so they are NOT covered by this report and should not be assumed to be in good condition: ${model.coverageGaps.join(', ')}.`,
+      kind: 'body'
+    })
+  }
   for (const section of model.sections) {
     lines.push({ text: `${section.name} — ${section.condition}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key, followUp: !!section.followUp })
     if (section.text) lines.push({ text: section.text, kind: 'note' })
