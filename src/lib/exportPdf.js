@@ -46,7 +46,10 @@ export function renderPdfLines(reportOrModel) {
     })
   }
   for (const section of model.sections) {
-    lines.push({ text: `${section.name} — ${section.condition}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key, followUp: !!section.followUp })
+    lines.push({ text: `${section.name} — ${section.condition}${section.autoSuggested ? ' (auto-suggested, not confirmed)' : ''}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key, followUp: !!section.followUp, autoSuggested: !!section.autoSuggested })
+    // An unconfirmed auto-derived rating is called out in-line so a reader never
+    // mistakes it for one the inspector verified (parity with the on-screen badge).
+    if (section.autoSuggested) lines.push({ text: 'Rating auto-suggested from the narrative — not confirmed by the inspector.', kind: 'autonote' })
     if (section.text) lines.push({ text: section.text, kind: 'note' })
     if (section.photoCount > 0) lines.push({ text: `${section.photoCount} photo(s) attached`, kind: 'photo', photos: section.photos })
   }
@@ -152,6 +155,10 @@ async function buildPdfDoc(reportOrModel) {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED)
       const wrapped = doc.splitTextToSize(ln.text, maxW)
       for (const w of wrapped) { ensure(13); doc.text(w, marginX, y); y += 13 }
+    } else if (ln.kind === 'autonote') {
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8.5); doc.setTextColor(...ACCENT)
+      const wrapped = doc.splitTextToSize(ln.text, maxW)
+      for (const w of wrapped) { ensure(12); doc.text(w, marginX, y); y += 12 }
     } else if (ln.kind === 'photo') {
       const photos = ln.photos || []
       let px = marginX

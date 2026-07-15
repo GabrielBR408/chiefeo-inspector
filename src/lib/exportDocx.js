@@ -157,6 +157,9 @@ export async function buildDocxDocument(reportOrModel) {
       children: [
         new TextRun({ text: section.name, color: NAVY }),
         new TextRun({ text: `   ${section.condition}`, bold: true, color: condColor(section.condition), size: 20 }),
+        // An unconfirmed auto-derived rating is labeled so it is never mistaken for
+        // one the inspector verified (parity with the on-screen "auto-suggested" badge).
+        ...(section.autoSuggested ? [new TextRun({ text: '   (auto-suggested, not confirmed)', italics: true, color: MUTED, size: 16 })] : []),
         ...(section.followUp ? [new TextRun({ text: '   FOLLOW-UP', bold: true, color: ACCENT, size: 16 })] : [])
       ]
     }))

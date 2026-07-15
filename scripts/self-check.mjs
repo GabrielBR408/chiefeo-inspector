@@ -712,6 +712,35 @@ console.log('\n[31] deriveCondition: life-safety vocab, un-inverted positives, m
   assert('"no water damage" still N/A', d('no water damage was observed anywhere') === 'N/A')
 }
 
+console.log('\n[32] Auto-suggested (unconfirmed) ratings are flagged in PDF, DOCX, CSV, and JSON')
+{
+  const { buildSectionsCsv, buildJsonExport } = await import('../src/lib/exportData.js')
+  // Fresh, never-confirmed section (conditionEdited falsy) -> auto-suggested.
+  const secs = mergeSections([], segmentNarrative('the kitchen sink leaks'))
+  const model = buildExportModel({ ...baseReport, walkthrough: 'the kitchen sink leaks', sections: secs, summary: 'ok' })
+  const kitchen = model.sections.find((s) => s.key === 'kitchen')
+  assert('model marks the unconfirmed section autoSuggested', kitchen && kitchen.autoSuggested === true, kitchen && String(kitchen.autoSuggested))
+  const pdf = Buffer.from(await pdfToArrayBuffer(model)).toString('latin1')
+  assert('PDF flags the rating as auto-suggested', /auto-suggested/i.test(pdf))
+  const xml = unzipEntry(await docxToBuffer(model), 'word/document.xml')
+  assert('DOCX flags the rating as auto-suggested', /auto-suggested/i.test(xml))
+  const csv = buildSectionsCsv(model)
+  assert('CSV has an auto_suggested column', /,auto_suggested,/.test(csv))
+  assert('CSV marks the unconfirmed row auto_suggested = yes', /,Poor,yes,/.test(csv))
+  const json = buildJsonExport(model)
+  assert('JSON carries an autoSuggested key per section', json.sections.every((s) => 'autoSuggested' in s))
+  assert('JSON marks the unconfirmed section autoSuggested true', json.sections.find((s) => s.key === 'kitchen').autoSuggested === true)
+  // A CONFIRMED rating (conditionEdited) is NOT flagged, in any format.
+  const confirmed = buildExportModel({ ...baseReport, walkthrough: 'the kitchen sink leaks', sections: secs.map((s) => ({ ...s, conditionEdited: true })), summary: 'ok' })
+  assert('confirmed section is not autoSuggested', confirmed.sections.find((s) => s.key === 'kitchen').autoSuggested === false)
+  assert('confirmed PDF has no auto-suggested caveat', !/auto-suggested/i.test(Buffer.from(await pdfToArrayBuffer(confirmed)).toString('latin1')))
+  assert('confirmed DOCX has no auto-suggested caveat', !/auto-suggested/i.test(unzipEntry(await docxToBuffer(confirmed), 'word/document.xml')))
+  assert('confirmed CSV row marks auto_suggested = no', /,Poor,no,/.test(buildSectionsCsv(confirmed)))
+  // N/A carries no claim, so it is never flagged as auto-suggested.
+  const naModel = buildExportModel({ ...baseReport, sections: [{ id: 'sec_hall', key: 'hall', name: 'Hallway', condition: 'N/A', conditionEdited: false, photos: [] }], summary: '' })
+  assert('an N/A section is not auto-suggested', naModel.sections[0].autoSuggested === false)
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

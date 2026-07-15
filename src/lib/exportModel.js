@@ -38,16 +38,24 @@ export function buildExportModel(report) {
     inspector: report.inspector || '',
     date: report.date || ''
   }
-  const sections = (report.sections || []).map((s) => ({
-    id: s.id || `sec_${s.key}`,
-    key: s.key,
-    name: s.name || s.area || 'Area',
-    condition: isValidCondition(s.condition) ? s.condition : DEFAULT_CONDITION,
-    text: s.text || '',
-    followUp: !!s.followUp,
-    photoCount: (s.photos || []).length,
-    photos: s.photos || []
-  }))
+  const sections = (report.sections || []).map((s) => {
+    const condition = isValidCondition(s.condition) ? s.condition : DEFAULT_CONDITION
+    return {
+      id: s.id || `sec_${s.key}`,
+      key: s.key,
+      name: s.name || s.area || 'Area',
+      condition,
+      // An auto-derived rating the inspector has NOT confirmed (no conditionEdited).
+      // The on-screen "auto-suggested" badge must survive into every export so a
+      // downstream reader can't mistake an unconfirmed rating for a human-verified
+      // one. N/A carries no claim, so it is never flagged (mirrors the UI badge).
+      autoSuggested: !s.conditionEdited && condition !== 'N/A',
+      text: s.text || '',
+      followUp: !!s.followUp,
+      photoCount: (s.photos || []).length,
+      photos: s.photos || []
+    }
+  })
   // Condition tallies, so exports can carry a ratings summary without recomputing.
   const conditionCounts = sections.reduce((acc, s) => {
     acc[s.condition] = (acc[s.condition] || 0) + 1

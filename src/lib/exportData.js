@@ -37,16 +37,18 @@ const toModel = (reportOrModel) =>
 function sectionRow(header, s) {
   return [
     header.property, header.address, header.inspector, header.date,
-    s.name, s.condition, s.text, s.followUp ? 'yes' : 'no', s.photoCount
+    s.name, s.condition, s.autoSuggested ? 'yes' : 'no', s.text, s.followUp ? 'yes' : 'no', s.photoCount
   ]
 }
 
 // One row per narrative-derived section, header fields repeated on every row.
+// `auto_suggested` marks a rating the inspector never confirmed, so a spreadsheet
+// consumer can filter/flag them instead of trusting them as verified.
 export function buildSectionsCsv(reportOrModel) {
   const model = toModel(reportOrModel)
   const lines = [csvLine([
     'property', 'address', 'inspector', 'date',
-    'section', 'condition', 'notes', 'follow_up', 'photo_count'
+    'section', 'condition', 'auto_suggested', 'notes', 'follow_up', 'photo_count'
   ])]
   for (const s of model.sections) lines.push(csvLine(sectionRow(model.header, s)))
   return BOM + lines.join(CRLF) + CRLF
@@ -83,6 +85,9 @@ export function buildJsonExport(reportOrModel) {
     summary: model.summary,
     sections: model.sections.map((s) => ({
       id: s.id, key: s.key, name: s.name, condition: s.condition,
+      // Machine-readable qualifier: true when the rating is auto-derived and not
+      // yet confirmed by the inspector (mirrors the on-screen "auto-suggested" badge).
+      autoSuggested: !!s.autoSuggested,
       text: s.text, followUp: s.followUp, photoCount: s.photoCount
     })),
     sectionCount: model.sectionCount,
