@@ -5,7 +5,7 @@ import VoiceButton from './components/VoiceButton.jsx'
 import FeedbackWidget from './components/FeedbackWidget.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels, prefixHash } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels, prefixHash, draftBannerMessage } from './lib/segment.js'
 import { coverageGaps } from './lib/exportModel.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
@@ -246,9 +246,7 @@ export default function App() {
         summaryEdited: keepUserSummary ? r.summaryEdited : false,
         aiAreas: areas || r.aiAreas
       }))
-      setDraftMsg(source === 'ai'
-        ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
-        : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
+      setDraftMsg(draftBannerMessage(source))
       track('draft_generated', { source: source === 'ai' ? 'ai' : 'deterministic' })
     } catch (_e) {
       setDraftMsg('Could not draft — please try again.')

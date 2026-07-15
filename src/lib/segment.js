@@ -556,7 +556,25 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
     ? llm.summary.trim()
     : deterministicSummary(report, merged)
 
-  return { sections: merged, summary, source: llm ? 'ai' : 'deterministic', areas }
+  // SOURCE is taken from the response BODY, not merely from whether the fetch
+  // succeeded. api/draft.js returns {source:'deterministic'} when it fell back
+  // internally (no API key, unparseable model output, upstream error) even
+  // though the HTTP call itself was a 200 — deriving source from `llm` being
+  // truthy mislabels those as "ai". A response that omits `source` entirely
+  // (older server, or a test mock) but did return is treated as 'ai' for
+  // backward compatibility; only an explicit 'deterministic' downgrades it.
+  const source = llm ? (llm.source === 'deterministic' ? 'deterministic' : 'ai') : 'deterministic'
+
+  return { sections: merged, summary, source, areas }
+}
+
+// The Draft-status banner text, derived purely from the resolved source so the
+// UI never claims AI polish that did not happen. Kept here (pure) so the
+// self-check can assert the deterministic banner never says "Drafted with AI".
+export function draftBannerMessage(source) {
+  return source === 'ai'
+    ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
+    : 'Drafted offline (AI unavailable) — sections and summary generated from your text without AI polish. Everything below is editable.'
 }
 
 // --- Summaries & tallies (section-based) ------------------------------------

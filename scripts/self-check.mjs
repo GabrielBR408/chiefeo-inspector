@@ -10,7 +10,7 @@ import { CONDITIONS } from '../src/lib/schema.js'
 import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
   tallyConditions, deterministicSummary, lastMentionedKey, mergeSections,
-  effectiveRemovedKeys, prefixHash
+  effectiveRemovedKeys, prefixHash, draftBannerMessage
 } from '../src/lib/segment.js'
 import { parseDetails, parseDetailsSmart, extractDate } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
@@ -666,6 +666,26 @@ console.log('\n[27] CSV/JSON data export: every section present, punch-list pari
   assert('JSON string round-trips', JSON.parse(buildJsonString(model)).sectionCount === model.sectionCount)
 
   function csvCell(v) { return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v }
+}
+
+console.log('\n[30] Draft source reflects the server RESPONSE, not just fetch success (no AI mislabeling)')
+{
+  // Server without an API key returns HTTP 200 but {source:'deterministic'} —
+  // the banner must NOT claim "Drafted with AI".
+  const detFetch = async () => ({ ok: true, json: async () => ({ areas: [], summary: 'x', source: 'deterministic' }) })
+  const det = await analyzeNarrative(baseReport, { fetchImpl: detFetch, makeId: (k) => `sec_${k}` })
+  assert('a deterministic server response is labeled deterministic (not ai)', det.source === 'deterministic', det.source)
+  assert('deterministic banner does NOT contain "Drafted with AI"', !draftBannerMessage(det.source).includes('Drafted with AI'), draftBannerMessage(det.source))
+  assert('deterministic banner explains AI was unavailable', /AI unavailable/i.test(draftBannerMessage(det.source)))
+  // A genuine AI response still says "Drafted with AI".
+  const aiFetch = async () => ({ ok: true, json: async () => ({ areas: [], summary: 'x', source: 'ai' }) })
+  const ai = await analyzeNarrative(baseReport, { fetchImpl: aiFetch, makeId: (k) => `sec_${k}` })
+  assert('an ai server response is labeled ai', ai.source === 'ai', ai.source)
+  assert('ai banner contains "Drafted with AI"', draftBannerMessage(ai.source).includes('Drafted with AI'))
+  // A response that omits source but did return stays 'ai' (backward compat).
+  const legacyFetch = async () => ({ ok: true, json: async () => ({ areas: [], summary: 'x' }) })
+  const legacy = await analyzeNarrative(baseReport, { fetchImpl: legacyFetch, makeId: (k) => `sec_${k}` })
+  assert('a source-less response is treated as ai (back-compat)', legacy.source === 'ai', legacy.source)
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------
