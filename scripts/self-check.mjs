@@ -582,6 +582,47 @@ console.log('\n[26] Follow-up flags: preserved, exported, punch-listed — never
   assert('summary silent when nothing is flagged', !sum0.includes('flagged for follow-up'))
 }
 
+console.log('\n[27] CSV/JSON data export: every section present, punch-list parity, no photo data, RFC 4180 escaping')
+{
+  const { buildSectionsCsv, buildPunchListCsv, buildJsonExport, buildJsonString } = await import('../src/lib/exportData.js')
+
+  // Narrative with a comma, a quote, and a Poor rating — exercises escaping and
+  // the punch-list rule (Poor lands on the list without a flag).
+  const secs = mergeSections([], segmentNarrative(
+    'The kitchen counter is cracked, stained, and in poor shape. ' +
+    'The roof looks good. The basement wall reads "moisture" on the meter and is in poor condition.'
+  )).map((s) => (s.key === 'roof' ? { ...s, followUp: true } : s))
+  const report = { property: 'Maple, Court #4', address: '123 "A" St', inspector: 'Jordan Vega', date: '2026-07-01', summary: 'Overall fair.', sections: secs.map((s) => ({ ...s, photos: s.key === 'kitchen' ? [{ dataUrl: 'data:image/png;base64,AAAA' }] : [] })) }
+  const model = buildExportModel(report)
+
+  // Sections CSV: header row + one row per section, every section name present.
+  const csv = buildSectionsCsv(model)
+  const rows = csv.replace(/^\uFEFF/, '').split('\r\n').filter(Boolean)
+  assert('CSV starts with UTF-8 BOM', csv.charCodeAt(0) === 0xfeff)
+  assert('CSV has one row per section plus header', rows.length === model.sections.length + 1, String(rows.length))
+  for (const s of model.sections) assert(`CSV carries section "${s.name}"`, csv.includes(csvCell(s.name)))
+  assert('CSV quotes the comma-bearing property name', csv.includes('"Maple, Court #4"'))
+  assert('CSV doubles embedded quotes (RFC 4180)', csv.includes('""moisture""') && csv.includes('123 ""A"" St'))
+  assert('CSV never embeds photo data', !csv.includes('data:image'))
+  assert('CSV photo_count column reflects photos', rows.some((r) => r.endsWith(',1')))
+
+  // Punch-list CSV: exactly the model's followUps (flagged roof + both Poors).
+  const punchCsv = buildPunchListCsv(model)
+  const punchRows = punchCsv.replace(/^\uFEFF/, '').split('\r\n').filter(Boolean).slice(1)
+  assert('punch-list CSV has exactly the punch-listed sections', punchRows.length === model.followUps.length && model.followUps.length === 3, `${punchRows.length} vs ${model.followUps.length}`)
+  assert('flagged column distinguishes user flags from Poor ratings', punchRows.some((r) => r.includes(',yes,')) && punchRows.some((r) => r.includes(',no,')))
+
+  // JSON: versioned, every section key, punch-list keys match, no photo data.
+  const json = buildJsonExport(model)
+  assert('JSON is schema-versioned', json.schemaVersion === 1)
+  assert('JSON carries every section key in order', JSON.stringify(json.sections.map((s) => s.key)) === JSON.stringify(exportSectionKeys(model)))
+  assert('JSON punchListKeys match the model punch list', JSON.stringify(json.punchListKeys) === JSON.stringify(model.followUps.map((s) => s.key)))
+  assert('JSON strips photo data to counts', !buildJsonString(model).includes('data:image') && json.sections.every((s) => !('photos' in s)))
+  assert('JSON string round-trips', JSON.parse(buildJsonString(model)).sectionCount === model.sectionCount)
+
+  function csvCell(v) { return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v }
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

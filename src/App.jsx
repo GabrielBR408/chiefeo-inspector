@@ -8,6 +8,7 @@ import { fileToPhoto } from './lib/db.js'
 import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels, prefixHash } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
+import { downloadCsv, downloadJson } from './lib/exportData.js'
 import { saveReport, loadReport, clearReport, saveInspection, listSavedInspections, loadInspection, deleteInspection } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
@@ -273,8 +274,10 @@ export default function App() {
     try {
       const base = (report.property || report.address || 'inspection').replace(/[^\w.-]+/g, '_').slice(0, 40)
       if (kind === 'pdf') await downloadPdf(report, `${base}.pdf`)
-      else await downloadDocx(report, `${base}.docx`)
-      track(kind === 'pdf' ? 'export_pdf' : 'export_docx')
+      else if (kind === 'docx') await downloadDocx(report, `${base}.docx`)
+      else if (kind === 'csv') await downloadCsv(report, base)
+      else await downloadJson(report, base)
+      track(`export_${kind}`)
     } catch (e) {
       // Shown at the export buttons (not the Draft card) so the user sees it.
       setExportMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
@@ -544,6 +547,12 @@ export default function App() {
           </button>
           <button className="export-btn export-btn--secondary" onClick={() => onExport('docx')} disabled={!!exporting}>
             {exporting === 'docx' ? 'Preparing DOCX…' : <><span aria-hidden="true">⬇</span> Editable Word (.docx)</>}
+          </button>
+          <button className="export-btn export-btn--secondary" onClick={() => onExport('csv')} disabled={!!exporting}>
+            {exporting === 'csv' ? 'Preparing CSV…' : <><span aria-hidden="true">⬇</span> CSV (spreadsheet)</>}
+          </button>
+          <button className="export-btn export-btn--secondary" onClick={() => onExport('json')} disabled={!!exporting}>
+            {exporting === 'json' ? 'Preparing JSON…' : <><span aria-hidden="true">⬇</span> JSON (data)</>}
           </button>
         </div>
         {exportMsg && <p className="generate-msg generate-msg--info">{exportMsg}</p>}
