@@ -741,6 +741,31 @@ console.log('\n[32] Auto-suggested (unconfirmed) ratings are flagged in PDF, DOC
   assert('an N/A section is not auto-suggested', naModel.sections[0].autoSuggested === false)
 }
 
+console.log('\n[33] AI-resolved corrected area name syncs the already-created section title')
+{
+  // Narrative first names "break room"; /api/draft resolves the display name to
+  // "Kitchenette" via `renames`. The already-created section must adopt it so the
+  // header agrees with the AI summary — but the key/text/rating are untouched.
+  const rep = { ...baseReport, walkthrough: 'The break room sink is clean.', sections: [] }
+  const fetchImpl = async () => ({ ok: true, json: async () => ({
+    areas: [], summary: 'The kitchenette sink is clean.', source: 'ai',
+    renames: [{ from: 'break room', to: 'Kitchenette' }]
+  }) })
+  const { sections } = await analyzeNarrative(rep, { fetchImpl, makeId: (k) => `sec_${k}` })
+  const s = sections.find((x) => x.key === 'breakroom')
+  assert('section exists for the first-detected area', !!s)
+  assert('section name is the AI-resolved "Kitchenette", not "Break Room"', s && s.name === 'Kitchenette', s && s.name)
+  assert('rename leaves the key untouched', s && s.key === 'breakroom', s && s.key)
+  assert('rename leaves the text faithful/untouched', s && s.text === 'The break room sink is clean.', s && s.text)
+  // A user-edited name is NOT overwritten by an AI rename.
+  const rep2 = { ...baseReport, walkthrough: 'The break room sink is clean.', sections: [
+    { id: 'sec_breakroom', key: 'breakroom', area: 'Break Room', name: 'My Custom Name', text: 'The break room sink is clean.', condition: 'Good', photos: [], textEdited: false, conditionEdited: false, nameEdited: true, followUp: false }
+  ] }
+  const r2 = await analyzeNarrative(rep2, { fetchImpl, makeId: (k) => `sec_${k}` })
+  const s2 = r2.sections.find((x) => x.key === 'breakroom')
+  assert('user-edited name wins over the AI rename', s2 && s2.name === 'My Custom Name', s2 && s2.name)
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

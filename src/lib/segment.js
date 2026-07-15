@@ -556,6 +556,21 @@ export async function proposeAreaLabels(narrative, { fetchImpl } = {}) {
   } catch (_e) { return [] }
 }
 
+// Resolve a section key against an AI `renames` list. Each entry maps an original
+// area phrase (or key) to a corrected display name: { from, to } or { key, name }.
+// Returns the resolved display name for `key`, or null. Matching is by key or by
+// the slug of the original phrase — never by the target, so a rename can't match a
+// section it isn't about.
+function resolvedName(key, renames) {
+  for (const r of renames) {
+    if (!r) continue
+    const to = r.to || r.name
+    if (!to) continue
+    if (r.key === key || (r.from && slugify(r.from) === key)) return String(to)
+  }
+  return null
+}
+
 // --- LLM analysis (faithfulness-safe) ---------------------------------------
 // Calls the serverless /api/draft with the narrative and returns
 // { sections, summary, source }. The LLM only proposes extra area labels and a
@@ -587,7 +602,24 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
   // Respect user-removed sections here too, or Draft would resurrect them.
   const removed = effectiveRemovedKeys(report.removedKeys || [], narrative, areas)
   const fresh = segmentNarrative(narrative, areas).filter((s) => !removed.some((r) => r.key === s.key))
-  const merged = mergeSections(report.sections || [], fresh, makeId || ((k) => `sec_${k}`))
+  const preMerged = mergeSections(report.sections || [], fresh, makeId || ((k) => `sec_${k}`))
+
+  // AI self-correction resolution: when a narrative NAMES an area then corrects it
+  // mid-sentence ("the break room… actually a kitchenette"), /api/draft can return
+  // `renames` mapping the first-detected area to the resolved display name. Adopt
+  // that resolved name for the already-created section (unless the inspector
+  // hand-edited the name), so the section HEADER matches the AI-written summary
+  // instead of showing the retracted first guess. Renames never change a section's
+  // key, text, or rating — only its display name.
+  const renames = (llm && Array.isArray(llm.renames)) ? llm.renames : []
+  const merged = renames.length
+    ? preMerged.map((s) => {
+        if (s.nameEdited) return s
+        const to = resolvedName(s.key, renames)
+        return to && to !== s.name ? { ...s, name: to } : s
+      })
+    : preMerged
+
   const summary = (llm && typeof llm.summary === 'string' && llm.summary.trim())
     ? llm.summary.trim()
     : deterministicSummary(report, merged)

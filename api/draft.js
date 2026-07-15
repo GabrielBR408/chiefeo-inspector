@@ -20,12 +20,15 @@ export const config = { api: { bodyParser: true } }
 
 const SYSTEM_PROMPT =
   'You extract structure from a property inspector\'s spoken walkthrough. ' +
-  'Given the narrative, do TWO things and return STRICT JSON: ' +
-  '{"areas": [..], "summary": ".."}. ' +
+  'Given the narrative, do THREE things and return STRICT JSON: ' +
+  '{"areas": [..], "renames": [..], "summary": ".."}. ' +
   '"areas": the list of distinct rooms/areas/places the narrative EXPLICITLY names ' +
   '(e.g. "kitchen", "roof", "primary bath", "garage", "mudroom"), as short lowercase ' +
   'phrases copied verbatim from the narrative, in order of first mention. ' +
   'Do NOT include an area the narrative does not name. Do NOT invent areas. ' +
+  '"renames": OPTIONAL list of {"from":"<the area phrase the narrative FIRST used>","to":"<corrected display name>"} ' +
+  'for any area the walkthrough names and then EXPLICITLY corrects (e.g. "the break room, actually a kitchenette" ' +
+  '-> {"from":"break room","to":"Kitchenette"}). Use ONLY the inspector\'s own correction; omit if there is none. ' +
   '"summary": one short paragraph overview of the property\'s condition based ONLY on ' +
   'what the narrative says — do not add findings, figures, or areas that are not in the narrative.'
 
@@ -95,6 +98,14 @@ export default async function handler(req, res) {
     }
     return json(res, 200, {
       areas: Array.isArray(parsed.areas) ? parsed.areas.filter((a) => typeof a === 'string').slice(0, 40) : [],
+      // Pass through only well-formed {from,to} rename pairs (both non-empty
+      // strings), capped — the client applies them to section display names.
+      renames: (!labelsOnly && Array.isArray(parsed.renames))
+        ? parsed.renames
+            .filter((r) => r && typeof r.from === 'string' && typeof r.to === 'string' && r.from.trim() && r.to.trim())
+            .map((r) => ({ from: r.from.slice(0, 80), to: r.to.slice(0, 80) }))
+            .slice(0, 20)
+        : [],
       summary: labelsOnly ? '' : (typeof parsed.summary === 'string' ? parsed.summary : deterministicSummary(body)),
       source: 'ai'
     })
