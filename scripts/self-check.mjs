@@ -688,6 +688,30 @@ console.log('\n[30] Draft source reflects the server RESPONSE, not just fetch su
   assert('a source-less response is treated as ai (back-compat)', legacy.source === 'ai', legacy.source)
 }
 
+console.log('\n[31] deriveCondition: life-safety vocab, un-inverted positives, mild≠Poor, hedges stay N/A')
+{
+  const d = deriveCondition
+  // Bullet 1 — life-safety / compliance vocabulary that used to default to N/A.
+  assert('"overdue" -> Poor', d('the fire extinguisher tag is overdue') === 'Poor', d('the fire extinguisher tag is overdue'))
+  assert('"does not latch" -> Poor', d('the stairwell door does not latch') === 'Poor', d('the stairwell door does not latch'))
+  assert('"flickering" -> Poor', d('the exit sign is flickering') === 'Poor', d('the exit sign is flickering'))
+  assert('"needs immediate service" -> Poor', d('the panel needs immediate service') === 'Poor', d('the panel needs immediate service'))
+  assert('"deficiency" -> Poor', d('inspection noted a deficiency') === 'Poor', d('inspection noted a deficiency'))
+  // Bullet 2 — explicit positives that were inverted to N/A or Poor.
+  assert('"serviced ... running fine" -> Good (was N/A)', d('the unit was serviced in March and is running fine') === 'Good', d('the unit was serviced in March and is running fine'))
+  assert('"no signs of overheating or corrosion" -> Good (was Poor)', d('no signs of overheating or corrosion') === 'Good', d('no signs of overheating or corrosion'))
+  // Bullet 3 — mild wording must not auto-escalate to Poor.
+  assert('"worn ... drips steadily" -> Fair (not Poor)', d('the gasket is worn and the valve drips steadily') === 'Fair', d('the gasket is worn and the valve drips steadily'))
+  // Bullet 4 — hedged/unconfirmed language must not harden into Poor/Fair.
+  assert('"might be leaking" -> N/A (not Poor)', d('the water heater might be leaking') === 'N/A', d('the water heater might be leaking'))
+  assert('"possibly ... could not confirm" -> N/A (not Poor)', d('possibly some corrosion, not sure, could not confirm') === 'N/A', d('possibly some corrosion, not sure, could not confirm'))
+  // Guards — a stated rating still wins even when hedged elsewhere; negations hold.
+  assert('explicit "in poor condition" wins over a stray hedge', d('the wall is in poor condition but I could not confirm the cause') === 'Poor', d('the wall is in poor condition but I could not confirm the cause'))
+  assert('"free of rot and rust" -> Good (list-negation)', d('the beams are free of rot and rust') === 'Good', d('the beams are free of rot and rust'))
+  assert('a real leak still -> Poor', d('there is a leak here') === 'Poor')
+  assert('"no water damage" still N/A', d('no water damage was observed anywhere') === 'N/A')
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

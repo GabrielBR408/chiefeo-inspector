@@ -277,19 +277,35 @@ const EXPLICIT_RE = [
 // does not fire inside "updated"/"outdated". Scanned worst-severity first.
 const COND_KEYWORDS = {
   Poor: ['poor', 'damaged', 'broken', 'leak', 'leaking', 'leaked', 'leaks', 'crack', 'cracked', 'cracking', 'cracks',
-    'worn', 'deteriorated', 'deteriorating', 'deterioration', 'needs repair', 'needs replacement', 'needs replacing',
+    'deteriorated', 'deteriorating', 'deterioration', 'needs repair', 'needs replacement', 'needs replacing',
+    'needs immediate repair', 'needs immediate service', 'needs immediate attention', 'needs service',
     'failing', 'failed', 'rot', 'rotted', 'rotting', 'rotten', 'mold', 'mildew', 'soft spot', 'curling', 'missing',
     'hazard', 'hazardous', 'unsafe', 'water damage', 'rust', 'rusted', 'rusting', 'corroded', 'corrosion', 'clogged',
     'inoperable', 'not working', 'does not work', "doesn't work", 'sagging', 'termite', 'loose', 'jammed', 'seized',
     'stuck', 'warped', 'warping', 'bent', 'torn', 'frayed', 'hole', 'holes', 'spalling', 'efflorescence',
-    'blistered', 'blistering', 'settling', 'pothole', 'potholes'],
-  Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed', 'cosmetic',
+    'blistered', 'blistering', 'settling', 'pothole', 'potholes',
+    // Life-safety / compliance vocabulary — previously absent, so these defaulted
+    // to N/A (reading as all-clear) instead of Poor. A door that won't latch, an
+    // overdue inspection, flickering emergency lighting, or a noted deficiency are
+    // dispatchable findings, not neutral observations.
+    'overdue', 'past due', 'deficiency', 'deficiencies', 'deficient', 'flickering', 'flickers', 'flicker',
+    'does not latch', "doesn't latch", 'will not latch', "won't latch", 'not latching', 'no longer latches',
+    'out of service', 'out of compliance', 'non-compliant', 'noncompliant', 'code violation', 'not to code'],
+  Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'worn', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed', 'cosmetic',
     'older', 'weathered', 'peeling', 'faded', 'discolored', 'discoloration', 'stained', 'staining', 'stain',
     'loud', 'noisy', 'dented', 'dent', 'dents', 'chipped', 'chip', 'chips', 'chipping', 'scratched', 'scratches',
-    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks', 'fading', 'ponding'],
+    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks', 'fading', 'ponding',
+    // A steady drip / mild wear is a real note but NOT severe — it should read Fair,
+    // not auto-escalate to Poor + punch-list with no severity language present.
+    'drips', 'drip', 'dripping'],
   Good: ['good', 'excellent', 'brand new', 'recently replaced', 'recently updated', 'recently renovated', 'updated',
-    'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible', 'clean', 'functional',
-    'works well', 'like new', 'pristine', 'solid', 'new']
+    'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible',
+    // Explicit positive/absence-of-defect assessments — previously not in the
+    // lexicon, so "running fine" or "no signs of ... corrosion" fell through to
+    // N/A or (worse) inverted to Poor off an incidental defect noun.
+    'no signs of', 'no sign of', 'no evidence of', 'free of', 'free from', 'no damage',
+    'clean', 'functional', 'running fine', 'runs fine', 'running well', 'runs well',
+    'works well', 'works fine', 'like new', 'pristine', 'solid', 'fine', 'new']
 }
 
 const _wordReCache = new Map()
@@ -306,9 +322,24 @@ function wordRe(k) {
 // PASSING check, and it must not rate Poor. Apostrophe-less variants cover
 // dictation engines that drop the apostrophe entirely.
 const NEGATOR_WINDOW_RE = /\b(?:no|not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|doesn't|doesnt|don't|dont|didn't|didnt|won't|wont|can't|cant|cannot|couldn't|couldnt|wouldn't|wouldnt|shouldn't|shouldnt|hasn't|hasnt|haven't|havent|hadn't|hadnt|without|never|free\s+of|free\s+from)\s+(?:\w+\s+){0,2}$/
+// The 2-word window catches the FIRST item of a negated phrase ("no signs of
+// overheating") but MISSES later items of a coordinated list ("...or corrosion").
+// A defect noun that is the second+ item of a "no/free-of X or/and Y" list is a
+// statement of ABSENCE too, so it must not fire Poor. Deliberately does NOT span
+// commas or unbounded text (that would swallow a following independent clause,
+// e.g. "no water damage, the roof leaks") — only an explicit or/and coordinator
+// plus an optional article between the connector and the cue.
+const NEGATED_LIST_ITEM_RE = /\b(?:no|not|without|free\s+of|free\s+from|no\s+(?:signs?|evidence|indications?|traces?)\s+of)\b[\w\s]*?\b(?:or|and)\b\s+(?:(?:a|an|the|any|some|visible)\s+)?$/i
 function isNegated(lc, index) {
-  return NEGATOR_WINDOW_RE.test(lc.slice(0, index))
+  const before = lc.slice(0, index)
+  return NEGATOR_WINDOW_RE.test(before) || NEGATED_LIST_ITEM_RE.test(before)
 }
+
+// Uncertainty / hedge markers. When the inspector explicitly hedges an
+// observation, an incidental keyword must NOT be hardened into a confident
+// Poor/Fair (which would also auto-add the item to the punch list). See
+// deriveCondition — an EXPLICIT stated rating still wins over a hedge.
+const HEDGE_RE = /\b(?:might|maybe|may be|possibly|possible|potentially|not sure|unsure|uncertain|not certain|hard to tell|unclear|could not confirm|couldn't confirm|couldnt confirm|cannot confirm|can't confirm|cant confirm|could not verify|couldn't verify|couldnt verify|unable to confirm|unable to verify)\b/
 
 // A NEGATED good-rating ("not in good condition", "isn't looking great") is a
 // stated downgrade — rate Fair, never let the embedded "good" read as Good.
@@ -338,6 +369,11 @@ export function deriveCondition(text) {
   if (unnegatedMatch(lc, explicitPoor[1])) return 'Poor'
   if (NEGATED_GOOD_RE.test(lc)) return 'Fair'
   for (const [level, re] of EXPLICIT_RE.slice(1)) { if (unnegatedMatch(lc, re)) return level }
+  // 1b. Hedged/unconfirmed observation: an EXPLICIT stated rating (above) still
+  //    wins, but do NOT let an incidental keyword harden a hedge into a confident
+  //    Poor/Fair with auto follow-up. Leave it N/A — the hedge language itself is
+  //    preserved verbatim in the exported section text.
+  if (HEDGE_RE.test(lc)) return 'N/A'
   // 2. Fallback: incidental keywords (word-boundary), worst severity first,
   //    skipping negated occurrences ("no water damage" is not damage).
   for (const level of ['Poor', 'Fair', 'Good']) {
