@@ -766,6 +766,33 @@ console.log('\n[33] AI-resolved corrected area name syncs the already-created se
   assert('user-edited name wins over the AI rename', s2 && s2.name === 'My Custom Name', s2 && s2.name)
 }
 
+console.log('\n[34] Re-draft summarizes CURRENT (edited) section text, not the stale raw narrative')
+{
+  // The inspector edited the Roof section to correct the dictation. A re-draft must
+  // send the corrected section text to the summary generator, not the original
+  // walkthrough, so the regenerated summary can't revert to contradicting the edit.
+  const edited = {
+    ...baseReport,
+    walkthrough: 'The roof is failing and needs replacement.',
+    sections: [{ id: 'sec_roof', key: 'roof', area: 'Roof', name: 'Roof',
+      text: 'The roof was recently replaced and is in good condition.', // inspector's correction
+      condition: 'Good', photos: [], textEdited: true, conditionEdited: true, nameEdited: false, followUp: false }]
+  }
+  let sent = null
+  const echoFetch = async (_url, opts) => {
+    sent = JSON.parse(opts.body).narrative
+    return { ok: true, json: async () => ({ areas: [], summary: `Summary: ${JSON.parse(opts.body).narrative}`, source: 'ai' }) }
+  }
+  const { summary } = await analyzeNarrative(edited, { fetchImpl: echoFetch, makeId: (k) => `sec_${k}` })
+  assert('AI request used the edited section text, not the raw narrative', sent && /recently replaced/.test(sent) && !/is failing/.test(sent), sent)
+  assert('regenerated summary reflects the inspector edit (not the stale dictation)', /recently replaced/.test(summary) && !/is failing/.test(summary), summary)
+  // With NO manual edits, the raw walkthrough is still the source (unchanged behavior).
+  let sent2 = null
+  const echo2 = async (_u, opts) => { sent2 = JSON.parse(opts.body).narrative; return { ok: true, json: async () => ({ areas: [], summary: 'ok', source: 'ai' }) } }
+  await analyzeNarrative({ ...baseReport, sections: [] }, { fetchImpl: echo2, makeId: (k) => `sec_${k}` })
+  assert('no edits -> the raw walkthrough is still sent verbatim', sent2 === baseReport.walkthrough, sent2)
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

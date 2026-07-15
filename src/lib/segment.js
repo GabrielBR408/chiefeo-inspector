@@ -581,6 +581,19 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
   const doFetch = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null)
   let llm = null
 
+  // What to summarize. The raw walkthrough stays the audit trail (segmentation
+  // below always runs on it), but once the inspector has MANUALLY edited a
+  // section's text, re-drafting must summarize the CURRENT section text — not the
+  // stale original dictation — or the regenerated summary can contradict the
+  // inspector's own correction (and that contradiction propagates into the export).
+  // This mirrors the deterministic summary, which is already section-based, so both
+  // draft paths now describe what the report actually says. With no edits, the raw
+  // walkthrough is sent unchanged (behavior preserved exactly).
+  const editedSectionsText = (report.sections || []).some((s) => s.textEdited)
+    ? (report.sections || []).map((s) => (s.text || '').trim()).filter(Boolean).join(' ').trim()
+    : ''
+  const draftSource = editedSectionsText || narrative
+
   if (doFetch && narrative.trim()) {
     try {
       const res = await doFetch(apiUrl('api/draft'), {
@@ -588,7 +601,7 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           property: report.property, address: report.address,
-          inspector: report.inspector, date: report.date, narrative
+          inspector: report.inspector, date: report.date, narrative: draftSource
         })
       })
       if (res && res.ok) llm = await res.json()
