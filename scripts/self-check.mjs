@@ -793,6 +793,35 @@ console.log('\n[34] Re-draft summarizes CURRENT (edited) section text, not the s
   assert('no edits -> the raw walkthrough is still sent verbatim', sent2 === baseReport.walkthrough, sent2)
 }
 
+console.log('\n[35] Segmentation: no tear on internal conjunctions; numbered instances stay distinct')
+{
+  // (a) A single sentence must NOT be torn at an internal "and" — even when an AI
+  // label makes "stairwell B" its own vocabulary entry, the clause stays intact.
+  const STAIR = 'Stairwell doors close and latch properly on floors one through eight; floor nine stairwell B door does not latch'
+  for (const labels of [[], ['stairwell b']]) {
+    const secs = segmentNarrative(STAIR, labels)
+    assert(`stairwell sentence is not torn at "and" (labels=${JSON.stringify(labels)})`, secs.length === 1, secs.map((s) => s.key).join(','))
+    assert('"close and latch properly" stays together (not orphaned)', secs[0] && /close and latch properly/.test(secs[0].text), secs[0] && secs[0].text)
+    assert('the floor-9 "does not latch" deficiency stays in the same section', secs[0] && /does not latch/.test(secs[0].text))
+    assert('stairwell slice stays faithful', secs.every((s) => faithful(STAIR, s.text)))
+  }
+  // (b) Two separately-numbered instances of one category are DISTINCT sections,
+  // neither losing its content.
+  const MECH = 'Mechanical room one has a leaking valve. Mechanical room two is dry and clean.'
+  const m = segmentNarrative(MECH)
+  assert('mechanical room one and two are two distinct sections', JSON.stringify(m.map((s) => s.key)) === JSON.stringify(['mechanicalroomone', 'mechanicalroomtwo']), m.map((s) => s.key).join(','))
+  const byK = Object.fromEntries(m.map((s) => [s.key, s]))
+  assert('room one keeps its own content, does not absorb room two', /leaking valve/.test(byK.mechanicalroomone.text) && !/dry and clean/.test(byK.mechanicalroomone.text))
+  assert('room two keeps its own content', /dry and clean/.test(byK.mechanicalroomtwo.text))
+  assert('both mechanical-room slices are faithful', m.every((s) => faithful(MECH, s.text)))
+  // Regression: a bare category with no numeral still yields ONE section.
+  const single = segmentNarrative('The mechanical room has a new pump.')
+  assert('an un-numbered mechanical room is a single section', single.length === 1 && single[0].key === 'mechanicalroom', single.map((s) => s.key).join(','))
+  // Regression: a genuine new-area "and" transition still splits.
+  const kr = segmentNarrative('the kitchen sink leaks and the roof is fine')
+  assert('a real "and the roof" transition still splits into two', JSON.stringify(kr.map((s) => s.key)) === JSON.stringify(['kitchen', 'roof']), kr.map((s) => s.key).join(','))
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

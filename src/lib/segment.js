@@ -196,6 +196,21 @@ function findAllAreas(text, aliases) {
         a.area = `Suite ${after[1].toUpperCase()}`
         a.key = slugify(a.area)
       }
+    } else {
+      // Fold a trailing INSTANCE designator (a spoken number word, ordinal, or
+      // digits) into any non-suite area, so two separately-numbered instances of
+      // the same category — "Mechanical Room One" and "Mechanical Room Two",
+      // "boiler 1" / "boiler 2" — register as DISTINCT sections keyed on the full
+      // named instance, instead of silently collapsing into one card that loses
+      // one instance's content. Single letters stay Suite-only (above) to avoid
+      // folding a stray article/initial after a common word.
+      const num = text.slice(a.end).match(/^\s+((?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)|\d{1,4})\b/i)
+      if (num) {
+        const desig = num[1]
+        a.end += num[0].length
+        a.area = `${a.area} ${/^\d+$/.test(desig) ? desig : cap(desig.toLowerCase())}`
+        a.key = slugify(`${a.key} ${desig}`)
+      }
     }
     const before = text.slice(0, a.start)
     const mm = before.match(/([A-Za-z0-9]+)(\s+)$/)
@@ -234,6 +249,23 @@ function lastCue(text, from, to) {
   return last
 }
 
+// Bare coordinating conjunctions. Unlike the deictic starters (there/then/next…)
+// these frequently join clauses INTERNALLY ("doors close AND latch properly",
+// "worn AND torn"), so a conjunction only marks a new-area boundary when the next
+// area begins right after it — not when it sits deep inside the previous clause.
+const CONJUNCTION_ONLY = new Set(['and', 'plus'])
+
+// The (lowercased, letters-only) word beginning at `index`.
+function wordAt(text, index) {
+  const m = text.slice(index).match(/^\S+/)
+  return m ? m[0].toLowerCase().replace(/[^a-z]/g, '') : ''
+}
+// Count whitespace-delimited words in [from, to).
+function wordsBetween(text, from, to) {
+  const m = text.slice(from, Math.max(from, to)).match(/\S+/g)
+  return m ? m.length : 0
+}
+
 // Split one unit at area-keyword transitions that have a clause cue between them.
 // No cue between two areas => no split (conservative; avoids "foundation wall").
 function splitUnitAtAreaTransitions(unitText, aliases) {
@@ -243,7 +275,14 @@ function splitUnitAtAreaTransitions(unitText, aliases) {
   for (let i = 1; i < anchors.length; i++) {
     if (anchors[i].key === anchors[i - 1].key) continue
     const cue = lastCue(unitText, anchors[i - 1].end, anchors[i].start)
-    if (cue > 0) cuts.add(cue)
+    if (cue <= 0) continue
+    // A bare conjunction ("…close AND latch properly on floor nine stairwell B…")
+    // that is FAR from the next area is an internal clause conjunction, not a
+    // new-area transition — cutting there tears one clause across two unrelated
+    // cards. Only honor a conjunction cut when the next area begins right after it
+    // ("…the sink leaks AND the roof is fine"). Deictic starters are unaffected.
+    if (CONJUNCTION_ONLY.has(wordAt(unitText, cue)) && wordsBetween(unitText, cue, anchors[i].start) > 4) continue
+    cuts.add(cue)
   }
   const bounds = [...cuts].sort((a, b) => a - b)
   const parts = []
