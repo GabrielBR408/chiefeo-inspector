@@ -36,11 +36,23 @@ export default function SectionCard({ section, onChange, onRemove, current = fal
           placeholder="Area name"
         />
         {current && <span className="area-current-badge" title="New “Add photo” taps file here">Current</span>}
+        {/* A rating the app DERIVED from the narrative (not yet confirmed by the
+            inspector) is labeled so it is never mistaken for a chosen rating.
+            N/A carries no claim, so it needs no badge. Picking any value in the
+            dropdown sets conditionEdited and the badge clears. */}
+        {!section.conditionEdited && section.condition !== 'N/A' && (
+          <span
+            className="cond-auto-badge"
+            title="Auto-suggested from your notes — review and confirm or change it."
+          >
+            auto-suggested
+          </span>
+        )}
         <select
           className={condClass}
           value={section.condition}
           onChange={(e) => set({ condition: e.target.value }, { conditionEdited: true })}
-          aria-label="Condition"
+          aria-label={section.conditionEdited ? 'Condition' : 'Condition (auto-suggested — confirm)'}
         >
           {CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>

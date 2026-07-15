@@ -570,16 +570,61 @@ console.log('\n[26] Follow-up flags: preserved, exported, punch-listed — never
   const pdf = Buffer.from(await pdfToArrayBuffer(model)).toString('latin1')
   assert('real PDF bytes contain the punch-list heading', pdf.includes('Follow-up / Punch list'))
   assert('real PDF bytes flag the section inline', pdf.includes('FOLLOW-UP'))
-  const xml = unzipEntry(await docxToBuffer(model), 'word/document.xml')
+  const docBuf = await docxToBuffer(model)
+  const xml = unzipEntry(docBuf, 'word/document.xml')
   assert('real DOCX contains the punch-list heading', xml.includes('Follow-up / Punch list'))
   assert('real DOCX flags the section inline', xml.includes('FOLLOW-UP'))
-  assert('DOCX punch list numbers the flagged item', /1\. Kitchen/.test(xml))
+  // Punch list now uses NATIVE Word numbering (auto-renumbering) rather than a
+  // hand-typed "1." prefix: the flagged item carries a numbering property, and a
+  // numbering definition backs it.
+  assert('DOCX punch-list item uses native numbering', /Kitchen/.test(xml) && /w:numPr/.test(xml))
+  const numXml = (() => { try { return unzipEntry(docBuf, 'word/numbering.xml') } catch (_e) { return '' } })()
+  assert('DOCX ships a numbering definition for the punch list', numXml.includes('w:abstractNum') || numXml.includes('<w:num '))
 
   // Deterministic summary mentions the flagged count (and stays silent at zero).
   const sum = deterministicSummary({ inspector: 'I' }, regrown)
   assert('summary mentions flagged count', sum.includes('1 item flagged for follow-up'))
   const sum0 = deterministicSummary({ inspector: 'I' }, segmentNarrative('the roof is fine'))
   assert('summary silent when nothing is flagged', !sum0.includes('flagged for follow-up'))
+}
+
+console.log('\n[28] Coverage gaps: unmentioned major systems are reported, mentioned ones are not')
+{
+  const { coverageGaps } = await import('../src/lib/exportModel.js')
+  // The base NARRATIVE mentions roof, kitchen (plumbing via faucet), primary
+  // bath, basement/foundation, living room — but no HVAC, electrical, or life-safety.
+  const gaps = coverageGaps(NARRATIVE)
+  assert('roof is NOT reported as a gap (it was mentioned)', !gaps.includes('Roof'), gaps.join(','))
+  assert('foundation is NOT a gap (basement/foundation mentioned)', !gaps.some((g) => /Foundation/.test(g)), gaps.join(','))
+  assert('HVAC IS reported as a gap', gaps.some((g) => /HVAC/.test(g)), gaps.join(','))
+  assert('Electrical IS reported as a gap', gaps.includes('Electrical'), gaps.join(','))
+  assert('Life-safety IS reported as a gap', gaps.some((g) => /Life-safety/.test(g)), gaps.join(','))
+  assert('empty walkthrough yields no gaps (nothing to warn on blank report)', coverageGaps('').length === 0)
+  // The coverage note reaches both exports.
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({ ...s, id: `sec_${s.key}`, photos: [] }))
+  const covModel = buildExportModel({ ...baseReport, sections: secs, summary: 'ok' })
+  assert('export model carries coverageGaps', Array.isArray(covModel.coverageGaps) && covModel.coverageGaps.length > 0)
+  const covPdf = Buffer.from(await pdfToArrayBuffer(covModel)).toString('latin1')
+  assert('PDF renders the coverage note', covPdf.includes('Coverage note') && covPdf.includes('HVAC'))
+  const covXml = unzipEntry(await docxToBuffer(covModel), 'word/document.xml')
+  assert('DOCX renders the coverage note', covXml.includes('Coverage note') && covXml.includes('HVAC'))
+}
+
+console.log('\n[29] DOCX ratings summary table + real author metadata')
+{
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({ ...s, id: `sec_${s.key}`, photos: [] }))
+  const model = buildExportModel({ ...baseReport, sections: secs, summary: 'ok' })
+  assert('model exposes conditionCounts', model.conditionCounts && typeof model.conditionCounts.Good === 'number')
+  const buf = await docxToBuffer(model)
+  const xml = unzipEntry(buf, 'word/document.xml')
+  assert('DOCX contains a ratings summary heading', xml.includes('Ratings summary'))
+  assert('DOCX renders a real table', xml.includes('<w:tbl>'))
+  assert('ratings table has the Area/Condition/Follow-up header', xml.includes('Area') && xml.includes('Condition') && xml.includes('Follow-up'))
+  assert('DOCX carries a totals line', xml.includes('Totals — Good:'))
+  // Author metadata: docx writes core properties to docProps/core.xml.
+  const core = unzipEntry(buf, 'docProps/core.xml')
+  assert('DOCX core props name the inspector as creator', core.includes('Jordan Vega'), core.slice(0, 400))
+  assert('DOCX title metadata is set (not Un-named)', /<dc:title>.+<\/dc:title>/.test(core))
 }
 
 console.log('\n[27] CSV/JSON data export: every section present, punch-list parity, no photo data, RFC 4180 escaping')

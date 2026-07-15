@@ -210,6 +210,23 @@ textarea { width: 100%; resize: vertical; }
   border: 1px solid #cfe4ef; border-radius: 999px; padding: 0.1rem 0.5rem; flex: none;
 }
 
+/* An auto-derived rating the inspector hasn't confirmed yet — amber so it reads
+   as "review me", visually distinct from a chosen rating. Clears once confirmed. */
+.cond-auto-badge {
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-weight: 700; color: #8a5a00; background: #fdf3e0;
+  border: 1px solid #f0d9a8; border-radius: 999px; padding: 0.1rem 0.45rem; flex: none;
+  white-space: nowrap;
+}
+
+/* Coverage note — amber advisory that major systems went unmentioned. */
+.coverage-note {
+  margin: 0.9rem 0 0; padding: 0.7rem 0.85rem; font-size: 0.86rem; line-height: 1.5;
+  color: #6b4a00; background: #fdf6e7; border: 1px solid #f0dca8;
+  border-radius: 8px;
+}
+.coverage-note strong { color: #6b4a00; }
+
 /* Generate / export */
 .generate-btn {
   width: 100%; padding: 0.85rem 1rem; border: none; border-radius: 8px;
