@@ -6,6 +6,12 @@
   --line: #e3e7ec;
   --accent: #4a9fc0;
   --accent-ink: #2e7da6;
+  /* CTA fill tokens — white text on these passes WCAG AA (>=4.5:1):
+     --cta #256a8f = 5.94:1, --cta-hover #1d5875 = 7.76:1. The lighter
+     --accent above (2.99:1) is kept only for decorative/focus use, never
+     as a background behind white button text. */
+  --cta: #256a8f;
+  --cta-hover: #1d5875;
   --danger: #b4452f;
   --good: #1f6f44;
   --fair: #9a6c10;
@@ -43,6 +49,15 @@ body {
   border-radius: 8px; cursor: pointer; white-space: nowrap;
 }
 .new-inspection-btn:hover { background: #e8f3f9; }
+/* INS-05: "New inspection" (discards) and "Save inspection" (persists) must not
+   look identical. New stays a light outline button; Save is a filled primary so
+   the high-stakes distinction reads at a glance. White text on --cta passes AA. */
+.save-inspection-btn {
+  border: 1px solid var(--cta); background: var(--cta); color: #fff;
+  font: inherit; font-weight: 600; font-size: 0.85rem; padding: 0.45rem 0.8rem;
+  border-radius: 8px; cursor: pointer; white-space: nowrap;
+}
+.save-inspection-btn:hover { background: var(--cta-hover); border-color: var(--cta-hover); }
 .masthead-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; }
 
 /* When signed in, the shared account menu renders a fixed avatar at the top-
@@ -139,6 +154,17 @@ textarea { width: 100%; resize: vertical; }
   border-radius: 7px; padding: 0.4rem 0.7rem; font: inherit; font-size: 0.82rem;
   font-weight: 600; cursor: pointer;
 }
+/* Follow-up flag toggle — one tap adds the section to the exported punch list. */
+.flag-btn {
+  border: 1px solid var(--line); background: #fff; color: var(--muted);
+  border-radius: 8px; padding: 0.35rem 0.55rem; font-size: 0.8rem;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.flag-btn--on {
+  color: var(--accent-ink); border-color: var(--accent-ink);
+  box-shadow: inset 0 0 0 1px var(--accent-ink); font-weight: 650;
+}
+
 .mini-btn:hover, .add-item:hover, .add-area:hover { background: #e8f3f9; border-color: #bcd9ea; }
 .add-item { margin-top: 0.7rem; }
 .add-area { margin-top: 1rem; }
@@ -150,6 +176,9 @@ textarea { width: 100%; resize: vertical; }
   border: 1px solid var(--line); background: #fff; color: var(--accent-ink);
   border-radius: 7px; padding: 0.4rem 0.7rem; font: inherit; font-size: 0.82rem;
   font-weight: 600; cursor: pointer;
+  /* Field use: this is THE primary control, held while walking. 44px is the
+     platform minimum touch target — 34px invited mis-presses with gloves on. */
+  min-height: 44px;
 }
 .voice-btn--sm { font-size: 0.78rem; padding: 0.35rem 0.6rem; }
 .voice-btn { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
@@ -175,16 +204,48 @@ textarea { width: 100%; resize: vertical; }
   margin: 0; padding: 1rem 1.1rem; border: 1px dashed var(--line);
   border-radius: 8px; color: var(--muted); font-size: 0.88rem; background: #fafbfc;
 }
-.unfiled-photo { margin-top: 1rem; }
+.unfiled-photo { margin-top: 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+/* INS-03: show WHICH area an unfiled photo will land on before the user taps. */
+.unfiled-target {
+  font-size: 0.8rem; color: var(--cta); font-weight: 600;
+  background: #eaf3f8; border: 1px solid #cfe4ef; border-radius: 999px;
+  padding: 0.25rem 0.6rem; white-space: nowrap;
+}
+.unfiled-target strong { font-weight: 700; }
+/* INS-03: highlight the section card the next photo will attach to. */
+.area--current { border-color: var(--cta); box-shadow: inset 0 0 0 1px var(--cta); }
+.area-current-badge {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+  font-weight: 700; color: var(--cta); background: #eaf3f8;
+  border: 1px solid #cfe4ef; border-radius: 999px; padding: 0.1rem 0.5rem; flex: none;
+}
+
+/* An auto-derived rating the inspector hasn't confirmed yet — amber so it reads
+   as "review me", visually distinct from a chosen rating. Clears once confirmed. */
+.cond-auto-badge {
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-weight: 700; color: #8a5a00; background: #fdf3e0;
+  border: 1px solid #f0d9a8; border-radius: 999px; padding: 0.1rem 0.45rem; flex: none;
+  white-space: nowrap;
+}
+
+/* Coverage note — amber advisory that major systems went unmentioned. */
+.coverage-note {
+  margin: 0.9rem 0 0; padding: 0.7rem 0.85rem; font-size: 0.86rem; line-height: 1.5;
+  color: #6b4a00; background: #fdf6e7; border: 1px solid #f0dca8;
+  border-radius: 8px;
+}
+.coverage-note strong { color: #6b4a00; }
 
 /* Generate / export */
 .generate-btn {
   width: 100%; padding: 0.85rem 1rem; border: none; border-radius: 8px;
-  background: var(--accent); color: #fff; font-size: 0.98rem; font-weight: 700;
+  background: var(--cta); color: #fff; font-size: 0.98rem; font-weight: 700;
   font-family: inherit; cursor: pointer;
 }
-.generate-btn:hover:not(:disabled) { background: var(--accent-ink); }
+.generate-btn:hover:not(:disabled) { background: var(--cta-hover); }
 .generate-btn:disabled { opacity: 0.6; cursor: default; }
+.generate-hint { font-size: 0.8rem; color: var(--muted); margin: 0.6rem 0 0; line-height: 1.5; }
 .generate-msg { font-size: 0.86rem; margin-top: 0.8rem; }
 .generate-msg--info { color: var(--muted); }
 
@@ -193,13 +254,13 @@ textarea { width: 100%; resize: vertical; }
 .export-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
 .export-btn {
   flex: 1 1 auto; min-width: 11rem; padding: 0.75rem 1rem;
-  border: 1px solid var(--accent); border-radius: 8px;
-  background: var(--accent); color: #fff; font-size: 0.9rem; font-weight: 700;
+  border: 1px solid var(--cta); border-radius: 8px;
+  background: var(--cta); color: #fff; font-size: 0.9rem; font-weight: 700;
   font-family: inherit; cursor: pointer;
 }
-.export-btn:hover:not(:disabled) { background: var(--accent-ink); border-color: var(--accent-ink); }
-.export-btn--secondary { background: #fff; color: var(--accent-ink); }
-.export-btn--secondary:hover:not(:disabled) { background: #e8f3f9; }
+.export-btn:hover:not(:disabled) { background: var(--cta-hover); border-color: var(--cta-hover); }
+.export-btn--secondary { background: #fff; color: var(--cta); border-color: var(--cta); }
+.export-btn--secondary:hover:not(:disabled) { background: #e8f3f9; color: var(--cta-hover); border-color: var(--cta-hover); }
 .export-btn:disabled { opacity: 0.6; cursor: progress; }
 .reset-link {
   display: inline-block; margin-top: 1rem; background: none; border: none;
@@ -220,7 +281,7 @@ textarea { width: 100%; resize: vertical; }
   box-shadow: 0 1px 6px rgba(0,0,0,0.25);
 }
 .update-banner-text { font-weight: 500; }
-.update-banner-btn { border: none; border-radius: 6px; padding: 0.35rem 0.85rem; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.update-banner-btn { border: none; border-radius: 6px; padding: 0.35rem 0.85rem; background: var(--cta); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 .update-banner-dismiss { border: none; background: none; color: #cdd6e0; font-size: 1.25rem; line-height: 1; cursor: pointer; padding: 0 0.25rem; }
 
 /* Persistence-failure warning: the one state where silent = data loss. */
@@ -246,10 +307,10 @@ textarea { width: 100%; resize: vertical; }
 .fb-pill {
   position: fixed; right: 1rem; bottom: 1rem; z-index: 900;
   border: none; border-radius: 999px; padding: 0.6rem 1.05rem;
-  background: var(--accent); color: #fff; font: inherit; font-size: 0.88rem;
+  background: var(--cta); color: #fff; font: inherit; font-size: 0.88rem;
   font-weight: 700; cursor: pointer; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
 }
-.fb-pill:hover { background: var(--accent-ink); }
+.fb-pill:hover { background: var(--cta-hover); }
 .fb-backdrop { position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.35); }
 .fb-sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 960;
@@ -272,7 +333,7 @@ textarea { width: 100%; resize: vertical; }
   border: 1px solid var(--line); border-radius: 999px; padding: 0.45rem 0.85rem;
   background: var(--bg); color: var(--ink); font: inherit; font-size: 0.84rem; cursor: pointer;
 }
-.fb-chip--on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.fb-chip--on { background: var(--cta); border-color: var(--cta); color: #fff; font-weight: 600; }
 .fb-text { width: 100%; min-height: 4.5rem; }
 .fb-receipt {
   display: flex; flex-direction: column; gap: 0.15rem;
@@ -282,10 +343,10 @@ textarea { width: 100%; resize: vertical; }
 .fb-receipt-title { font-weight: 700; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.06em; }
 .fb-send {
   width: 100%; padding: 0.8rem 1rem; border: none; border-radius: 8px;
-  background: var(--accent); color: #fff; font: inherit; font-size: 0.95rem;
+  background: var(--cta); color: #fff; font: inherit; font-size: 0.95rem;
   font-weight: 700; cursor: pointer;
 }
-.fb-send:hover:not(:disabled) { background: var(--accent-ink); }
+.fb-send:hover:not(:disabled) { background: var(--cta-hover); }
 .fb-send:disabled { opacity: 0.55; cursor: default; }
 .fb-done { text-align: center; padding: 0.5rem 0 0.25rem; }
 .fb-done-title { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; }

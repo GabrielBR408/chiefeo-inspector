@@ -196,6 +196,21 @@ function findAllAreas(text, aliases) {
         a.area = `Suite ${after[1].toUpperCase()}`
         a.key = slugify(a.area)
       }
+    } else {
+      // Fold a trailing INSTANCE designator (a spoken number word, ordinal, or
+      // digits) into any non-suite area, so two separately-numbered instances of
+      // the same category — "Mechanical Room One" and "Mechanical Room Two",
+      // "boiler 1" / "boiler 2" — register as DISTINCT sections keyed on the full
+      // named instance, instead of silently collapsing into one card that loses
+      // one instance's content. Single letters stay Suite-only (above) to avoid
+      // folding a stray article/initial after a common word.
+      const num = text.slice(a.end).match(/^\s+((?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)|\d{1,4})\b/i)
+      if (num) {
+        const desig = num[1]
+        a.end += num[0].length
+        a.area = `${a.area} ${/^\d+$/.test(desig) ? desig : cap(desig.toLowerCase())}`
+        a.key = slugify(`${a.key} ${desig}`)
+      }
     }
     const before = text.slice(0, a.start)
     const mm = before.match(/([A-Za-z0-9]+)(\s+)$/)
@@ -234,6 +249,23 @@ function lastCue(text, from, to) {
   return last
 }
 
+// Bare coordinating conjunctions. Unlike the deictic starters (there/then/next…)
+// these frequently join clauses INTERNALLY ("doors close AND latch properly",
+// "worn AND torn"), so a conjunction only marks a new-area boundary when the next
+// area begins right after it — not when it sits deep inside the previous clause.
+const CONJUNCTION_ONLY = new Set(['and', 'plus'])
+
+// The (lowercased, letters-only) word beginning at `index`.
+function wordAt(text, index) {
+  const m = text.slice(index).match(/^\S+/)
+  return m ? m[0].toLowerCase().replace(/[^a-z]/g, '') : ''
+}
+// Count whitespace-delimited words in [from, to).
+function wordsBetween(text, from, to) {
+  const m = text.slice(from, Math.max(from, to)).match(/\S+/g)
+  return m ? m.length : 0
+}
+
 // Split one unit at area-keyword transitions that have a clause cue between them.
 // No cue between two areas => no split (conservative; avoids "foundation wall").
 function splitUnitAtAreaTransitions(unitText, aliases) {
@@ -243,7 +275,14 @@ function splitUnitAtAreaTransitions(unitText, aliases) {
   for (let i = 1; i < anchors.length; i++) {
     if (anchors[i].key === anchors[i - 1].key) continue
     const cue = lastCue(unitText, anchors[i - 1].end, anchors[i].start)
-    if (cue > 0) cuts.add(cue)
+    if (cue <= 0) continue
+    // A bare conjunction ("…close AND latch properly on floor nine stairwell B…")
+    // that is FAR from the next area is an internal clause conjunction, not a
+    // new-area transition — cutting there tears one clause across two unrelated
+    // cards. Only honor a conjunction cut when the next area begins right after it
+    // ("…the sink leaks AND the roof is fine"). Deictic starters are unaffected.
+    if (CONJUNCTION_ONLY.has(wordAt(unitText, cue)) && wordsBetween(unitText, cue, anchors[i].start) > 4) continue
+    cuts.add(cue)
   }
   const bounds = [...cuts].sort((a, b) => a - b)
   const parts = []
@@ -277,19 +316,35 @@ const EXPLICIT_RE = [
 // does not fire inside "updated"/"outdated". Scanned worst-severity first.
 const COND_KEYWORDS = {
   Poor: ['poor', 'damaged', 'broken', 'leak', 'leaking', 'leaked', 'leaks', 'crack', 'cracked', 'cracking', 'cracks',
-    'worn', 'deteriorated', 'deteriorating', 'deterioration', 'needs repair', 'needs replacement', 'needs replacing',
+    'deteriorated', 'deteriorating', 'deterioration', 'needs repair', 'needs replacement', 'needs replacing',
+    'needs immediate repair', 'needs immediate service', 'needs immediate attention', 'needs service',
     'failing', 'failed', 'rot', 'rotted', 'rotting', 'rotten', 'mold', 'mildew', 'soft spot', 'curling', 'missing',
     'hazard', 'hazardous', 'unsafe', 'water damage', 'rust', 'rusted', 'rusting', 'corroded', 'corrosion', 'clogged',
     'inoperable', 'not working', 'does not work', "doesn't work", 'sagging', 'termite', 'loose', 'jammed', 'seized',
     'stuck', 'warped', 'warping', 'bent', 'torn', 'frayed', 'hole', 'holes', 'spalling', 'efflorescence',
-    'blistered', 'blistering', 'settling', 'pothole', 'potholes'],
-  Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed', 'cosmetic',
+    'blistered', 'blistering', 'settling', 'pothole', 'potholes',
+    // Life-safety / compliance vocabulary — previously absent, so these defaulted
+    // to N/A (reading as all-clear) instead of Poor. A door that won't latch, an
+    // overdue inspection, flickering emergency lighting, or a noted deficiency are
+    // dispatchable findings, not neutral observations.
+    'overdue', 'past due', 'deficiency', 'deficiencies', 'deficient', 'flickering', 'flickers', 'flicker',
+    'does not latch', "doesn't latch", 'will not latch', "won't latch", 'not latching', 'no longer latches',
+    'out of service', 'out of compliance', 'non-compliant', 'noncompliant', 'code violation', 'not to code'],
+  Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'worn', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed', 'cosmetic',
     'older', 'weathered', 'peeling', 'faded', 'discolored', 'discoloration', 'stained', 'staining', 'stain',
     'loud', 'noisy', 'dented', 'dent', 'dents', 'chipped', 'chip', 'chips', 'chipping', 'scratched', 'scratches',
-    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks', 'fading', 'ponding'],
+    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks', 'fading', 'ponding',
+    // A steady drip / mild wear is a real note but NOT severe — it should read Fair,
+    // not auto-escalate to Poor + punch-list with no severity language present.
+    'drips', 'drip', 'dripping'],
   Good: ['good', 'excellent', 'brand new', 'recently replaced', 'recently updated', 'recently renovated', 'updated',
-    'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible', 'clean', 'functional',
-    'works well', 'like new', 'pristine', 'solid', 'new']
+    'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible',
+    // Explicit positive/absence-of-defect assessments — previously not in the
+    // lexicon, so "running fine" or "no signs of ... corrosion" fell through to
+    // N/A or (worse) inverted to Poor off an incidental defect noun.
+    'no signs of', 'no sign of', 'no evidence of', 'free of', 'free from', 'no damage',
+    'clean', 'functional', 'running fine', 'runs fine', 'running well', 'runs well',
+    'works well', 'works fine', 'like new', 'pristine', 'solid', 'fine', 'new']
 }
 
 const _wordReCache = new Map()
@@ -300,15 +355,34 @@ function wordRe(k) {
 }
 
 // Negation guard: a cue directly preceded (within ~2 words) by a negator is a
-// statement of ABSENCE ("no water damage", "not broken") and must not fire.
-const NEGATOR_WINDOW_RE = /\b(?:no|not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|without|never|free\s+of|free\s+from)\s+(?:\w+\s+){0,2}$/
+// statement of ABSENCE ("no water damage", "not broken", "doesn't leak") and
+// must not fire. Includes the do/did/will/can/has family of contractions —
+// "the roof doesn't leak" is the single most common way inspectors dictate a
+// PASSING check, and it must not rate Poor. Apostrophe-less variants cover
+// dictation engines that drop the apostrophe entirely.
+const NEGATOR_WINDOW_RE = /\b(?:no|not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|doesn't|doesnt|don't|dont|didn't|didnt|won't|wont|can't|cant|cannot|couldn't|couldnt|wouldn't|wouldnt|shouldn't|shouldnt|hasn't|hasnt|haven't|havent|hadn't|hadnt|without|never|free\s+of|free\s+from)\s+(?:\w+\s+){0,2}$/
+// The 2-word window catches the FIRST item of a negated phrase ("no signs of
+// overheating") but MISSES later items of a coordinated list ("...or corrosion").
+// A defect noun that is the second+ item of a "no/free-of X or/and Y" list is a
+// statement of ABSENCE too, so it must not fire Poor. Deliberately does NOT span
+// commas or unbounded text (that would swallow a following independent clause,
+// e.g. "no water damage, the roof leaks") — only an explicit or/and coordinator
+// plus an optional article between the connector and the cue.
+const NEGATED_LIST_ITEM_RE = /\b(?:no|not|without|free\s+of|free\s+from|no\s+(?:signs?|evidence|indications?|traces?)\s+of)\b[\w\s]*?\b(?:or|and)\b\s+(?:(?:a|an|the|any|some|visible)\s+)?$/i
 function isNegated(lc, index) {
-  return NEGATOR_WINDOW_RE.test(lc.slice(0, index))
+  const before = lc.slice(0, index)
+  return NEGATOR_WINDOW_RE.test(before) || NEGATED_LIST_ITEM_RE.test(before)
 }
+
+// Uncertainty / hedge markers. When the inspector explicitly hedges an
+// observation, an incidental keyword must NOT be hardened into a confident
+// Poor/Fair (which would also auto-add the item to the punch list). See
+// deriveCondition — an EXPLICIT stated rating still wins over a hedge.
+const HEDGE_RE = /\b(?:might|maybe|may be|possibly|possible|potentially|not sure|unsure|uncertain|not certain|hard to tell|unclear|could not confirm|couldn't confirm|couldnt confirm|cannot confirm|can't confirm|cant confirm|could not verify|couldn't verify|couldnt verify|unable to confirm|unable to verify)\b/
 
 // A NEGATED good-rating ("not in good condition", "isn't looking great") is a
 // stated downgrade — rate Fair, never let the embedded "good" read as Good.
-const NEGATED_GOOD_RE = /\b(?:not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|no\s+longer)\s+(?:\w+\s+){0,2}?(?:in\s+)?(?:good|great|excellent|pristine|well[- ]maintained|like\s+new)\b/
+const NEGATED_GOOD_RE = /\b(?:not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|doesn't|doesnt|don't|dont|didn't|didnt|no\s+longer)\s+(?:\w+\s+){0,2}?(?:in\s+)?(?:good|great|excellent|pristine|well[- ]maintained|like\s+new)\b/
 
 // First non-negated match of `re` in `lc`, or null.
 function unnegatedMatch(lc, re) {
@@ -324,13 +398,21 @@ function unnegatedMatch(lc, re) {
 }
 
 export function deriveCondition(text) {
-  const lc = ` ${String(text || '').toLowerCase()} `
+  // Normalize curly apostrophes: iOS dictation emits "isn't broken", and the
+  // negation regexes match the straight-quote forms — without this, a dictated
+  // negation ("isn't", "doesn't") silently fails and the defect noun rates Poor.
+  const lc = ` ${String(text || '').toLowerCase().replace(/[‘’]/g, "'")} `
   // 1. Explicit self-rating wins over incidental defect words. A stated Poor
   //    still dominates; a negated Good ("not in good condition") rates Fair.
   const explicitPoor = EXPLICIT_RE[0]
   if (unnegatedMatch(lc, explicitPoor[1])) return 'Poor'
   if (NEGATED_GOOD_RE.test(lc)) return 'Fair'
   for (const [level, re] of EXPLICIT_RE.slice(1)) { if (unnegatedMatch(lc, re)) return level }
+  // 1b. Hedged/unconfirmed observation: an EXPLICIT stated rating (above) still
+  //    wins, but do NOT let an incidental keyword harden a hedge into a confident
+  //    Poor/Fair with auto follow-up. Leave it N/A — the hedge language itself is
+  //    preserved verbatim in the exported section text.
+  if (HEDGE_RE.test(lc)) return 'N/A'
   // 2. Fallback: incidental keywords (word-boundary), worst severity first,
   //    skipping negated occurrences ("no water damage" is not damage).
   for (const level of ['Poor', 'Fair', 'Good']) {
@@ -416,16 +498,18 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
       out.push({
         id: makeId(f.key), key: f.key, area: f.area, name: f.area,
         text: f.text, condition: f.condition, photos: [],
-        textEdited: false, conditionEdited: false, nameEdited: false
+        textEdited: false, conditionEdited: false, nameEdited: false,
+        followUp: false
       })
     }
   }
 
   // Retain previously-created sections that are no longer referenced by the
   // narrative but carry user work — photos OR any user edit (text, name,
-  // condition) — so re-segmentation never destroys something the user did.
+  // condition) OR a follow-up flag — so re-segmentation never destroys
+  // something the user did.
   for (const p of prev) {
-    const hasUserWork = (p.photos || []).length > 0 || p.textEdited || p.nameEdited || p.conditionEdited
+    const hasUserWork = (p.photos || []).length > 0 || p.textEdited || p.nameEdited || p.conditionEdited || p.followUp
     if (!freshByKey.has(p.key) && hasUserWork) out.push(p)
   }
   return out
@@ -433,15 +517,42 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
 
 // --- Removed-section suppression ---------------------------------------------
 // The user removed a section explicitly; re-segmentation must not resurrect it
-// on the next keystroke. Each entry is { key, at } where `at` is the narrative
-// length at removal time. An entry stays active (still suppresses) until the
-// narrative mentions that area again AT OR AFTER `at` — i.e. the user talking
-// about the area anew revives it, but the text that existed at removal doesn't.
+// on the next keystroke. Each entry is { key, at, h } where `at` is the
+// narrative length at removal time and `h` a cheap hash of the narrative at
+// that moment. An entry stays active (still suppresses) until the narrative
+// mentions that area again AT OR AFTER `at` — i.e. the user talking about the
+// area anew revives it, but the text that existed at removal doesn't.
+//
+// The position rule only means something while the text it referred to is
+// still there. If the narrative was cleared, shortened past the removal point,
+// or rewritten (prefix hash no longer matches), positions from the old text
+// are meaningless — any mention of the area then counts as a new mention and
+// revives it. Without this, removing a section and then clearing/retyping the
+// walkthrough suppressed that area FOREVER (typing "kitchen…" produced no
+// Kitchen section, which reads as silent data loss).
+
+// djb2 — tiny, deterministic, good enough to detect "this text was rewritten".
+export function prefixHash(s) {
+  let h = 5381
+  const str = String(s || '')
+  for (let i = 0; i < str.length; i++) h = (((h << 5) + h) + str.charCodeAt(i)) >>> 0
+  return h
+}
+
 export function effectiveRemovedKeys(removedKeys = [], narrative = '', extraLabels = []) {
   const list = (removedKeys || []).filter((r) => r && r.key)
   if (!list.length) return []
-  const anchors = findAllAreas(String(narrative || ''), buildAliases(extraLabels))
-  return list.filter((r) => !anchors.some((a) => a.key === r.key && a.start >= (r.at || 0)))
+  const text = String(narrative || '')
+  const anchors = findAllAreas(text, buildAliases(extraLabels))
+  return list.filter((r) => {
+    const at = r.at || 0
+    // Legacy entries (no h) can only check length; new entries verify content.
+    const prefixIntact = text.length >= at && (r.h === undefined || prefixHash(text.slice(0, at)) === r.h)
+    if (prefixIntact) return !anchors.some((a) => a.key === r.key && a.start >= at)
+    // Prefix gone/rewritten: the removal referred to text that no longer
+    // exists — any current mention of the area revives it.
+    return !anchors.some((a) => a.key === r.key)
+  })
 }
 
 // Base-aware URL for the serverless endpoint. Under a sub-path deploy the app is
@@ -484,6 +595,21 @@ export async function proposeAreaLabels(narrative, { fetchImpl } = {}) {
   } catch (_e) { return [] }
 }
 
+// Resolve a section key against an AI `renames` list. Each entry maps an original
+// area phrase (or key) to a corrected display name: { from, to } or { key, name }.
+// Returns the resolved display name for `key`, or null. Matching is by key or by
+// the slug of the original phrase — never by the target, so a rename can't match a
+// section it isn't about.
+function resolvedName(key, renames) {
+  for (const r of renames) {
+    if (!r) continue
+    const to = r.to || r.name
+    if (!to) continue
+    if (r.key === key || (r.from && slugify(r.from) === key)) return String(to)
+  }
+  return null
+}
+
 // --- LLM analysis (faithfulness-safe) ---------------------------------------
 // Calls the serverless /api/draft with the narrative and returns
 // { sections, summary, source }. The LLM only proposes extra area labels and a
@@ -494,6 +620,19 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
   const doFetch = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null)
   let llm = null
 
+  // What to summarize. The raw walkthrough stays the audit trail (segmentation
+  // below always runs on it), but once the inspector has MANUALLY edited a
+  // section's text, re-drafting must summarize the CURRENT section text — not the
+  // stale original dictation — or the regenerated summary can contradict the
+  // inspector's own correction (and that contradiction propagates into the export).
+  // This mirrors the deterministic summary, which is already section-based, so both
+  // draft paths now describe what the report actually says. With no edits, the raw
+  // walkthrough is sent unchanged (behavior preserved exactly).
+  const editedSectionsText = (report.sections || []).some((s) => s.textEdited)
+    ? (report.sections || []).map((s) => (s.text || '').trim()).filter(Boolean).join(' ').trim()
+    : ''
+  const draftSource = editedSectionsText || narrative
+
   if (doFetch && narrative.trim()) {
     try {
       const res = await doFetch(apiUrl('api/draft'), {
@@ -501,7 +640,7 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           property: report.property, address: report.address,
-          inspector: report.inspector, date: report.date, narrative
+          inspector: report.inspector, date: report.date, narrative: draftSource
         })
       })
       if (res && res.ok) llm = await res.json()
@@ -515,12 +654,47 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
   // Respect user-removed sections here too, or Draft would resurrect them.
   const removed = effectiveRemovedKeys(report.removedKeys || [], narrative, areas)
   const fresh = segmentNarrative(narrative, areas).filter((s) => !removed.some((r) => r.key === s.key))
-  const merged = mergeSections(report.sections || [], fresh, makeId || ((k) => `sec_${k}`))
+  const preMerged = mergeSections(report.sections || [], fresh, makeId || ((k) => `sec_${k}`))
+
+  // AI self-correction resolution: when a narrative NAMES an area then corrects it
+  // mid-sentence ("the break room… actually a kitchenette"), /api/draft can return
+  // `renames` mapping the first-detected area to the resolved display name. Adopt
+  // that resolved name for the already-created section (unless the inspector
+  // hand-edited the name), so the section HEADER matches the AI-written summary
+  // instead of showing the retracted first guess. Renames never change a section's
+  // key, text, or rating — only its display name.
+  const renames = (llm && Array.isArray(llm.renames)) ? llm.renames : []
+  const merged = renames.length
+    ? preMerged.map((s) => {
+        if (s.nameEdited) return s
+        const to = resolvedName(s.key, renames)
+        return to && to !== s.name ? { ...s, name: to } : s
+      })
+    : preMerged
+
   const summary = (llm && typeof llm.summary === 'string' && llm.summary.trim())
     ? llm.summary.trim()
     : deterministicSummary(report, merged)
 
-  return { sections: merged, summary, source: llm ? 'ai' : 'deterministic', areas }
+  // SOURCE is taken from the response BODY, not merely from whether the fetch
+  // succeeded. api/draft.js returns {source:'deterministic'} when it fell back
+  // internally (no API key, unparseable model output, upstream error) even
+  // though the HTTP call itself was a 200 — deriving source from `llm` being
+  // truthy mislabels those as "ai". A response that omits `source` entirely
+  // (older server, or a test mock) but did return is treated as 'ai' for
+  // backward compatibility; only an explicit 'deterministic' downgrades it.
+  const source = llm ? (llm.source === 'deterministic' ? 'deterministic' : 'ai') : 'deterministic'
+
+  return { sections: merged, summary, source, areas }
+}
+
+// The Draft-status banner text, derived purely from the resolved source so the
+// UI never claims AI polish that did not happen. Kept here (pure) so the
+// self-check can assert the deterministic banner never says "Drafted with AI".
+export function draftBannerMessage(source) {
+  return source === 'ai'
+    ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
+    : 'Drafted offline (AI unavailable) — sections and summary generated from your text without AI polish. Everything below is editable.'
 }
 
 // --- Summaries & tallies (section-based) ------------------------------------
@@ -550,6 +724,8 @@ export function deterministicSummary(report, sections = []) {
   if (t.Fair) flags.push(`${t.Fair} rated Fair`)
   if (t.Good) flags.push(`${t.Good} rated Good`)
   if (flags.length) parts.push(`${flags.join(', ')}.`)
+  const fu = sections.filter((s) => s.followUp).length
+  if (fu) parts.push(`${fu} item${fu === 1 ? '' : 's'} flagged for follow-up (see punch list).`)
   if (t.Poor) parts.push('Areas rated Poor should be prioritized for follow-up.')
   return parts.join(' ')
 }

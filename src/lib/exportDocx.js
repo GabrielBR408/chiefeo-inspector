@@ -5,6 +5,7 @@
 
 import { buildExportModel } from './exportModel.js'
 import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+import { BRAND } from './brand.js'
 
 // The docx library is heavy (~150 KB gzipped) and only needed at export time,
 // so it is loaded lazily — like jsPDF in exportPdf.js — keeping it out of the
@@ -24,7 +25,10 @@ function condColor(condition) {
 }
 
 export async function buildDocxDocument(reportOrModel) {
-  const { Document, Paragraph, TextRun, HeadingLevel, ImageRun } = await loadDocx()
+  const {
+    Document, Paragraph, TextRun, HeadingLevel, ImageRun,
+    Table, TableRow, TableCell, WidthType, AlignmentType, LevelFormat, BorderStyle
+  } = await loadDocx()
   const headerLine = (label, value) => new Paragraph({
     spacing: { after: 40 },
     children: [
@@ -35,9 +39,23 @@ export async function buildDocxDocument(reportOrModel) {
   const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const children = []
 
+  // Optional brand logo above the brand line. Validated like section photos —
+  // bad data is skipped silently, never a broken document.
+  try {
+    const lp = dataUrlParts(BRAND.logoDataUrl)
+    const lbytes = lp && /image\/(png|jpe?g)/.test(lp.mime) ? dataUrlToBytes(BRAND.logoDataUrl) : null
+    const lsize = lbytes && imageSize(lbytes)
+    if (lsize) {
+      const { width, height } = fitBox(lsize, 128, 48)
+      children.push(new Paragraph({
+        spacing: { after: 80 },
+        children: [new ImageRun({ type: lp.mime.includes('png') ? 'png' : 'jpg', data: lbytes, transformation: { width, height } })]
+      }))
+    }
+  } catch (_e) { /* skip bad logo */ }
   children.push(new Paragraph({
     spacing: { after: 120 },
-    children: [new TextRun({ text: 'ChiefEO Inspector', bold: true, color: ACCENT, size: 20 })]
+    children: [new TextRun({ text: BRAND.name || 'ChiefEO Inspector', bold: true, color: ACCENT, size: 20 })]
   }))
   children.push(new Paragraph({
     heading: HeadingLevel.HEADING_1,
@@ -48,6 +66,12 @@ export async function buildDocxDocument(reportOrModel) {
   children.push(headerLine('Address', model.header.address))
   children.push(headerLine('Inspector', model.header.inspector))
   children.push(headerLine('Date', model.header.date))
+  if (BRAND.licenseLine) {
+    children.push(new Paragraph({
+      spacing: { after: 40 },
+      children: [new TextRun({ text: BRAND.licenseLine, color: MUTED, size: 18 })]
+    }))
+  }
 
   if (model.summary) {
     children.push(new Paragraph({
@@ -55,6 +79,72 @@ export async function buildDocxDocument(reportOrModel) {
       children: [new TextRun({ text: 'Summary', color: NAVY })]
     }))
     children.push(new Paragraph({ children: [new TextRun({ text: model.summary })] }))
+  }
+
+  // Ratings summary table: one row per area with its condition and follow-up
+  // status, so a reader gets the whole picture at a glance before the detailed
+  // section-by-section write-up. This is the owner-facing "at a glance" the
+  // hand-built document lacked.
+  if (model.sections.length) {
+    const cell = (runs, { header = false, width } = {}) => new TableCell({
+      width: width ? { size: width, type: WidthType.PERCENTAGE } : undefined,
+      shading: header ? { fill: 'F0F3F6' } : undefined,
+      children: [new Paragraph({ children: Array.isArray(runs) ? runs : [runs] })]
+    })
+    const headerRow = new TableRow({
+      tableHeader: true,
+      children: [
+        cell(new TextRun({ text: 'Area', bold: true, color: NAVY }), { header: true, width: 55 }),
+        cell(new TextRun({ text: 'Condition', bold: true, color: NAVY }), { header: true, width: 25 }),
+        cell(new TextRun({ text: 'Follow-up', bold: true, color: NAVY }), { header: true, width: 20 })
+      ]
+    })
+    const bodyRows = model.sections.map((s) => new TableRow({
+      children: [
+        cell(new TextRun({ text: s.name, color: NAVY })),
+        cell(new TextRun({ text: s.condition, bold: true, color: condColor(s.condition) })),
+        cell(new TextRun({ text: (s.followUp || s.condition === 'Poor') ? 'Yes' : '—', color: MUTED }))
+      ]
+    }))
+    const c = model.conditionCounts || {}
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_2, spacing: { before: 240 },
+      children: [new TextRun({ text: 'Ratings summary', color: NAVY })]
+    }))
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: {
+        top: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE5' },
+        bottom: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE5' },
+        left: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE5' },
+        right: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE5' },
+        insideHorizontal: { style: BorderStyle.SINGLE, size: 2, color: 'E3E7EC' },
+        insideVertical: { style: BorderStyle.SINGLE, size: 2, color: 'E3E7EC' }
+      },
+      rows: [headerRow, ...bodyRows]
+    }))
+    children.push(new Paragraph({
+      spacing: { before: 80 },
+      children: [new TextRun({
+        text: `Totals — Good: ${c.Good || 0}, Fair: ${c.Fair || 0}, Poor: ${c.Poor || 0}, N/A: ${c['N/A'] || 0}.`,
+        color: MUTED, size: 18
+      })]
+    }))
+  }
+
+  // Coverage note: major systems the walkthrough never named. Reported so a
+  // reader never mistakes an unmentioned system for one inspected and found fine.
+  if (model.coverageGaps && model.coverageGaps.length) {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_2, spacing: { before: 240 },
+      children: [new TextRun({ text: 'Coverage note', color: NAVY })]
+    }))
+    children.push(new Paragraph({
+      children: [new TextRun({
+        text: `This walkthrough did not mention the following major systems, so they are NOT covered by this report and should not be assumed to be in good condition: ${model.coverageGaps.join(', ')}.`,
+        color: NAVY
+      })]
+    }))
   }
 
   if (model.sections.length === 0) {
@@ -66,7 +156,11 @@ export async function buildDocxDocument(reportOrModel) {
       heading: HeadingLevel.HEADING_2, spacing: { before: 240, after: 40 },
       children: [
         new TextRun({ text: section.name, color: NAVY }),
-        new TextRun({ text: `   ${section.condition}`, bold: true, color: condColor(section.condition), size: 20 })
+        new TextRun({ text: `   ${section.condition}`, bold: true, color: condColor(section.condition), size: 20 }),
+        // An unconfirmed auto-derived rating is labeled so it is never mistaken for
+        // one the inspector verified (parity with the on-screen "auto-suggested" badge).
+        ...(section.autoSuggested ? [new TextRun({ text: '   (auto-suggested, not confirmed)', italics: true, color: MUTED, size: 16 })] : []),
+        ...(section.followUp ? [new TextRun({ text: '   FOLLOW-UP', bold: true, color: ACCENT, size: 16 })] : [])
       ]
     }))
     children.push(new Paragraph({
@@ -107,7 +201,53 @@ export async function buildDocxDocument(reportOrModel) {
     }
   }
 
-  return new Document({ sections: [{ children }] })
+  // Punch list: numbered follow-up items at the end — the actionable summary a
+  // PM hands to a vendor or engineer. Membership is flagged OR Poor (see
+  // exportModel.followUps). Mirrors the PDF's punch list exactly.
+  const flagged = model.followUps || model.sections.filter((s) => s.followUp)
+  if (flagged.length) {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_2, spacing: { before: 320 },
+      children: [new TextRun({ text: 'Follow-up / Punch list', color: NAVY })]
+    }))
+    flagged.forEach((s) => {
+      children.push(new Paragraph({
+        // Native Word numbering (auto-renumbers, survives edits) instead of a
+        // hand-typed "1." prefix that breaks the moment a line is inserted.
+        numbering: { reference: 'punch-list', level: 0 },
+        spacing: { before: 80 },
+        children: [
+          new TextRun({ text: `${s.name} (${s.condition})`, bold: true, color: NAVY }),
+          ...(s.text ? [new TextRun({ text: ` — ${s.text}` })] : []),
+          ...(s.photoCount ? [new TextRun({ text: ` [${s.photoCount} photo(s)]`, italics: true, color: MUTED })] : [])
+        ]
+      }))
+    })
+  }
+
+  const title = (model.header && model.header.title) || 'Property Inspection Report'
+  const inspector = (model.header && model.header.inspector) || ''
+  const where = (model.header && (model.header.property || model.header.address)) || ''
+  return new Document({
+    // Real document metadata so Word shows the inspector as author instead of a
+    // generic "Un-named" — the file is owner-facing and often forwarded.
+    creator: inspector || 'ChiefEO Inspector',
+    title: where ? `${title} — ${where}` : title,
+    description: `Property inspection report generated by ChiefEO Inspector${inspector ? ` for inspector ${inspector}` : ''}.`,
+    numbering: {
+      config: [{
+        reference: 'punch-list',
+        levels: [{
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: '%1.',
+          alignment: AlignmentType.START,
+          style: { paragraph: { indent: { left: 460, hanging: 260 } } }
+        }]
+      }]
+    },
+    sections: [{ children }]
+  })
 }
 
 // Node: return a Buffer. Used by the self-check.

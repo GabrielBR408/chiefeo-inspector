@@ -67,7 +67,12 @@ export async function clearReport() {
 
 // Downscale a captured/selected image file to a JPEG dataUrl so IndexedDB and
 // the PDF stay small. Returns { id, name, dataUrl }.
+// Non-image files are REJECTED here (throw) so callers' existing try/catch
+// skips them: accept="image/*" is only advisory (drag-drop and some pickers
+// bypass it), and a text/PDF "photo" renders as a broken thumbnail in the UI
+// and an unembeddable entry in exports.
 export async function fileToPhoto(file, maxDim = 1280, quality = 0.72) {
+  if (!file || !/^image\//.test(file.type || '')) throw new Error('not an image')
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result)
@@ -137,7 +142,10 @@ export async function saveInspection(report) {
       address: report.address || '',
       date: report.date || '',
       savedAt: Date.now(),
-      sections: (report.sections || []).length,
+      // Count named areas only — mirrors the on-screen "areas detected" tally,
+      // which excludes the uncounted "General Observations" bucket (key
+      // 'general'). Keeps the library's "N areas" consistent with the app.
+      sections: (report.sections || []).filter((s) => s.key !== 'general').length,
       photos: (report.sections || []).reduce((n, s) => n + ((s.photos || []).length), 0)
     }
     const db = await open()

@@ -1,10 +1,11 @@
 import React, { useRef } from 'react'
 import { CONDITIONS } from '../lib/schema.js'
 import { fileToPhoto } from '../lib/db.js'
+import { track } from '../lib/track.js'
 
 // One narrative-derived section: an auto-detected area with its verbatim
 // narrative slice (editable), a derived-but-editable condition, and photos.
-export default function SectionCard({ section, onChange, onRemove }) {
+export default function SectionCard({ section, onChange, onRemove, current = false }) {
   const fileRef = useRef(null)
   const cameraRef = useRef(null)
 
@@ -25,7 +26,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
   const condClass = `cond cond--${(section.condition || 'N/A').toLowerCase().replace('/', '')}`
 
   return (
-    <section className="area">
+    <section className={`area${current ? ' area--current' : ''}`}>
       <div className="area-head">
         <input
           className="area-name"
@@ -34,19 +35,42 @@ export default function SectionCard({ section, onChange, onRemove }) {
           onChange={(e) => set({ name: e.target.value }, { nameEdited: true })}
           placeholder="Area name"
         />
+        {current && <span className="area-current-badge" title="New “Add photo” taps file here">Current</span>}
+        {/* A rating the app DERIVED from the narrative (not yet confirmed by the
+            inspector) is labeled so it is never mistaken for a chosen rating.
+            N/A carries no claim, so it needs no badge. Picking any value in the
+            dropdown sets conditionEdited and the badge clears. */}
+        {!section.conditionEdited && section.condition !== 'N/A' && (
+          <span
+            className="cond-auto-badge"
+            title="Auto-suggested from your notes — review and confirm or change it."
+          >
+            auto-suggested
+          </span>
+        )}
         <select
           className={condClass}
           value={section.condition}
           onChange={(e) => set({ condition: e.target.value }, { conditionEdited: true })}
-          aria-label="Condition"
+          aria-label={section.conditionEdited ? 'Condition' : 'Condition (auto-suggested — confirm)'}
         >
           {CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
+        <button
+          type="button"
+          className={`flag-btn${section.followUp ? ' flag-btn--on' : ''}`}
+          onClick={() => { const on = !section.followUp; set({ followUp: on }); track('followup_toggled', { on }) }}
+          aria-pressed={!!section.followUp}
+          title={section.followUp ? 'On the punch list — tap to unflag' : 'Flag for follow-up (adds to the punch list in exports)'}
+        >
+          <span aria-hidden="true">⚑</span> Follow-up
+        </button>
         <button type="button" className="icon-btn" onClick={onRemove} title="Remove section" aria-label={`Remove ${section.name || 'section'}`}>✕</button>
       </div>
 
       <textarea
         className="item-notes"
+        aria-label={`Notes for ${section.name || 'section'}`}
         value={section.text}
         onChange={(e) => set({ text: e.target.value }, { textEdited: true })}
         placeholder="What was said about this area…"

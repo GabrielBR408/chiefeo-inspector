@@ -10,7 +10,7 @@ import { CONDITIONS } from '../src/lib/schema.js'
 import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
   tallyConditions, deterministicSummary, lastMentionedKey, mergeSections,
-  effectiveRemovedKeys
+  effectiveRemovedKeys, prefixHash, draftBannerMessage
 } from '../src/lib/segment.js'
 import { parseDetails, parseDetailsSmart, extractDate } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
@@ -416,6 +416,21 @@ console.log('\n[19] User work survives re-segmentation; removed sections stay re
   const rep = { walkthrough: narr, sections: [], removedKeys: removed, aiAreas: [] }
   const { sections: drafted } = await analyzeNarrative(rep, { fetchImpl: async () => ({ ok: false }), makeId: (k) => `sec_${k}` })
   assert('Draft does not resurrect a removed section', !drafted.some((s) => s.key === 'kitchen'), drafted.map((s) => s.key).join(','))
+
+  // Rewritten-narrative revival: the position rule only applies while the text
+  // it referred to still exists. Clearing the walkthrough and retyping the area
+  // must NOT leave it suppressed forever (mention position < old `at`).
+  const removedH = [{ key: 'kitchen', at: narr.length, h: prefixHash(narr) }]
+  assert('removed key stays suppressed while its narrative is intact (hashed entry)',
+    effectiveRemovedKeys(removedH, narr).length === 1)
+  assert('clearing + retyping the area revives it (hashed entry)',
+    effectiveRemovedKeys(removedH, 'kitchen cabinets are cracked').length === 0)
+  assert('clearing + retyping withOUT the area keeps the entry (harmless)',
+    effectiveRemovedKeys(removedH, 'roof is fine').length === 1)
+  assert('legacy entry (no hash): shrunken narrative + new mention revives',
+    effectiveRemovedKeys([{ key: 'kitchen', at: 500 }], 'kitchen cabinets are cracked').length === 0)
+  assert('rewritten same-length-or-longer narrative revives on mention (hash mismatch)',
+    effectiveRemovedKeys(removedH, 'we looked at the kitchen area again today').length === 0)
 }
 
 console.log('\n[20] deriveCondition understands negation')
@@ -520,6 +535,291 @@ console.log('\n[25] Dictation diagnostics are bounded and privacy-safe (no free 
   assert('ua is the bounded class, never the raw string', props.ua === 'safari-ios', props.ua)
   assert('known sources pass through', dictationEventProps({ source: 'details' }).source === 'details' && dictationEventProps({ source: 'walkthrough' }).source === 'walkthrough')
   assert('empty input yields safe defaults', JSON.stringify(dictationEventProps({})) === JSON.stringify({ code: 'unknown', source: 'unknown', online: true, mic: 'unknown', ua: 'other-other' }), JSON.stringify(dictationEventProps({})))
+}
+
+console.log('\n[26] Follow-up flags: preserved, exported, punch-listed — never invented')
+{
+  // A flag set by the user survives re-segmentation (merge keeps extra props).
+  let ui = mergeSections([], segmentNarrative('the kitchen sink leaks and the roof is fine'))
+  assert('fresh sections default to followUp: false', ui.every((s) => s.followUp === false), JSON.stringify(ui.map((s) => s.followUp)))
+  ui = ui.map((s) => (s.key === 'kitchen' ? { ...s, followUp: true } : s))
+  const regrown = mergeSections(ui, segmentNarrative('the kitchen sink leaks and the roof is fine now with new gutters'))
+  const k = regrown.find((s) => s.key === 'kitchen')
+  assert('follow-up flag survives re-segmentation', k && k.followUp === true)
+
+  // A flagged section is USER WORK: it is retained when the narrative drops it.
+  const kept = mergeSections(ui, segmentNarrative('the roof is fine'))
+  assert('flagged section retained when its area leaves the narrative', kept.some((s) => s.key === 'kitchen' && s.followUp))
+
+  // Export model carries flags + count.
+  const model = buildExportModel({ property: 'P', sections: regrown, summary: '' })
+  assert('model carries followUp per section', model.sections.find((s) => s.key === 'kitchen').followUp === true && model.sections.find((s) => s.key === 'roof').followUp === false)
+  assert('model followUpCount matches flagged sections', model.followUpCount === 1, String(model.followUpCount))
+
+  // PDF fragments: section line carries the flag; exactly one punch-list line
+  // per flagged section, none invented for unflagged ones.
+  const lines = renderPdfLines(model)
+  assert('PDF section fragment carries followUp', lines.some((l) => l.kind === 'section' && l.key === 'kitchen' && l.followUp === true))
+  const punch = lines.filter((l) => l.kind === 'followup')
+  assert('exactly one punch-list fragment per flagged section', punch.length === 1 && punch[0].key === 'kitchen', JSON.stringify(punch.map((l) => l.key)))
+  assert('punch-list heading present only when something is flagged', lines.some((l) => l.kind === 'h2' && /punch list/i.test(l.text)))
+  const noneFlagged = renderPdfLines(buildExportModel({ sections: segmentNarrative('the roof is fine') }))
+  assert('no punch list when nothing is flagged', !noneFlagged.some((l) => l.kind === 'followup' || (l.kind === 'h2' && /punch list/i.test(l.text))))
+
+  // Real bytes: PDF and DOCX both carry the marker and the punch list.
+  const pdf = Buffer.from(await pdfToArrayBuffer(model)).toString('latin1')
+  assert('real PDF bytes contain the punch-list heading', pdf.includes('Follow-up / Punch list'))
+  assert('real PDF bytes flag the section inline', pdf.includes('FOLLOW-UP'))
+  const docBuf = await docxToBuffer(model)
+  const xml = unzipEntry(docBuf, 'word/document.xml')
+  assert('real DOCX contains the punch-list heading', xml.includes('Follow-up / Punch list'))
+  assert('real DOCX flags the section inline', xml.includes('FOLLOW-UP'))
+  // Punch list now uses NATIVE Word numbering (auto-renumbering) rather than a
+  // hand-typed "1." prefix: the flagged item carries a numbering property, and a
+  // numbering definition backs it.
+  assert('DOCX punch-list item uses native numbering', /Kitchen/.test(xml) && /w:numPr/.test(xml))
+  const numXml = (() => { try { return unzipEntry(docBuf, 'word/numbering.xml') } catch (_e) { return '' } })()
+  assert('DOCX ships a numbering definition for the punch list', numXml.includes('w:abstractNum') || numXml.includes('<w:num '))
+
+  // Deterministic summary mentions the flagged count (and stays silent at zero).
+  const sum = deterministicSummary({ inspector: 'I' }, regrown)
+  assert('summary mentions flagged count', sum.includes('1 item flagged for follow-up'))
+  const sum0 = deterministicSummary({ inspector: 'I' }, segmentNarrative('the roof is fine'))
+  assert('summary silent when nothing is flagged', !sum0.includes('flagged for follow-up'))
+}
+
+console.log('\n[28] Coverage gaps: unmentioned major systems are reported, mentioned ones are not')
+{
+  const { coverageGaps } = await import('../src/lib/exportModel.js')
+  // The base NARRATIVE mentions roof, kitchen (plumbing via faucet), primary
+  // bath, basement/foundation, living room — but no HVAC, electrical, or life-safety.
+  const gaps = coverageGaps(NARRATIVE)
+  assert('roof is NOT reported as a gap (it was mentioned)', !gaps.includes('Roof'), gaps.join(','))
+  assert('foundation is NOT a gap (basement/foundation mentioned)', !gaps.some((g) => /Foundation/.test(g)), gaps.join(','))
+  assert('HVAC IS reported as a gap', gaps.some((g) => /HVAC/.test(g)), gaps.join(','))
+  assert('Electrical IS reported as a gap', gaps.includes('Electrical'), gaps.join(','))
+  assert('Life-safety IS reported as a gap', gaps.some((g) => /Life-safety/.test(g)), gaps.join(','))
+  assert('empty walkthrough yields no gaps (nothing to warn on blank report)', coverageGaps('').length === 0)
+  // The coverage note reaches both exports.
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({ ...s, id: `sec_${s.key}`, photos: [] }))
+  const covModel = buildExportModel({ ...baseReport, sections: secs, summary: 'ok' })
+  assert('export model carries coverageGaps', Array.isArray(covModel.coverageGaps) && covModel.coverageGaps.length > 0)
+  const covPdf = Buffer.from(await pdfToArrayBuffer(covModel)).toString('latin1')
+  assert('PDF renders the coverage note', covPdf.includes('Coverage note') && covPdf.includes('HVAC'))
+  const covXml = unzipEntry(await docxToBuffer(covModel), 'word/document.xml')
+  assert('DOCX renders the coverage note', covXml.includes('Coverage note') && covXml.includes('HVAC'))
+}
+
+console.log('\n[29] DOCX ratings summary table + real author metadata')
+{
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({ ...s, id: `sec_${s.key}`, photos: [] }))
+  const model = buildExportModel({ ...baseReport, sections: secs, summary: 'ok' })
+  assert('model exposes conditionCounts', model.conditionCounts && typeof model.conditionCounts.Good === 'number')
+  const buf = await docxToBuffer(model)
+  const xml = unzipEntry(buf, 'word/document.xml')
+  assert('DOCX contains a ratings summary heading', xml.includes('Ratings summary'))
+  assert('DOCX renders a real table', xml.includes('<w:tbl>'))
+  assert('ratings table has the Area/Condition/Follow-up header', xml.includes('Area') && xml.includes('Condition') && xml.includes('Follow-up'))
+  assert('DOCX carries a totals line', xml.includes('Totals — Good:'))
+  // Author metadata: docx writes core properties to docProps/core.xml.
+  const core = unzipEntry(buf, 'docProps/core.xml')
+  assert('DOCX core props name the inspector as creator', core.includes('Jordan Vega'), core.slice(0, 400))
+  assert('DOCX title metadata is set (not Un-named)', /<dc:title>.+<\/dc:title>/.test(core))
+}
+
+console.log('\n[27] CSV/JSON data export: every section present, punch-list parity, no photo data, RFC 4180 escaping')
+{
+  const { buildSectionsCsv, buildPunchListCsv, buildJsonExport, buildJsonString } = await import('../src/lib/exportData.js')
+
+  // Narrative with a comma, a quote, and a Poor rating — exercises escaping and
+  // the punch-list rule (Poor lands on the list without a flag).
+  const secs = mergeSections([], segmentNarrative(
+    'The kitchen counter is cracked, stained, and in poor shape. ' +
+    'The roof looks good. The basement wall reads "moisture" on the meter and is in poor condition.'
+  )).map((s) => (s.key === 'roof' ? { ...s, followUp: true } : s))
+  const report = { property: 'Maple, Court #4', address: '123 "A" St', inspector: 'Jordan Vega', date: '2026-07-01', summary: 'Overall fair.', sections: secs.map((s) => ({ ...s, photos: s.key === 'kitchen' ? [{ dataUrl: 'data:image/png;base64,AAAA' }] : [] })) }
+  const model = buildExportModel(report)
+
+  // Sections CSV: header row + one row per section, every section name present.
+  const csv = buildSectionsCsv(model)
+  const rows = csv.replace(/^\uFEFF/, '').split('\r\n').filter(Boolean)
+  assert('CSV starts with UTF-8 BOM', csv.charCodeAt(0) === 0xfeff)
+  assert('CSV has one row per section plus header', rows.length === model.sections.length + 1, String(rows.length))
+  for (const s of model.sections) assert(`CSV carries section "${s.name}"`, csv.includes(csvCell(s.name)))
+  assert('CSV quotes the comma-bearing property name', csv.includes('"Maple, Court #4"'))
+  assert('CSV doubles embedded quotes (RFC 4180)', csv.includes('""moisture""') && csv.includes('123 ""A"" St'))
+  assert('CSV never embeds photo data', !csv.includes('data:image'))
+  assert('CSV photo_count column reflects photos', rows.some((r) => r.endsWith(',1')))
+
+  // Punch-list CSV: exactly the model's followUps (flagged roof + both Poors).
+  const punchCsv = buildPunchListCsv(model)
+  const punchRows = punchCsv.replace(/^\uFEFF/, '').split('\r\n').filter(Boolean).slice(1)
+  assert('punch-list CSV has exactly the punch-listed sections', punchRows.length === model.followUps.length && model.followUps.length === 3, `${punchRows.length} vs ${model.followUps.length}`)
+  assert('flagged column distinguishes user flags from Poor ratings', punchRows.some((r) => r.includes(',yes,')) && punchRows.some((r) => r.includes(',no,')))
+
+  // JSON: versioned, every section key, punch-list keys match, no photo data.
+  const json = buildJsonExport(model)
+  assert('JSON is schema-versioned', json.schemaVersion === 1)
+  assert('JSON carries every section key in order', JSON.stringify(json.sections.map((s) => s.key)) === JSON.stringify(exportSectionKeys(model)))
+  assert('JSON punchListKeys match the model punch list', JSON.stringify(json.punchListKeys) === JSON.stringify(model.followUps.map((s) => s.key)))
+  assert('JSON strips photo data to counts', !buildJsonString(model).includes('data:image') && json.sections.every((s) => !('photos' in s)))
+  assert('JSON string round-trips', JSON.parse(buildJsonString(model)).sectionCount === model.sectionCount)
+
+  function csvCell(v) { return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v }
+}
+
+console.log('\n[30] Draft source reflects the server RESPONSE, not just fetch success (no AI mislabeling)')
+{
+  // Server without an API key returns HTTP 200 but {source:'deterministic'} —
+  // the banner must NOT claim "Drafted with AI".
+  const detFetch = async () => ({ ok: true, json: async () => ({ areas: [], summary: 'x', source: 'deterministic' }) })
+  const det = await analyzeNarrative(baseReport, { fetchImpl: detFetch, makeId: (k) => `sec_${k}` })
+  assert('a deterministic server response is labeled deterministic (not ai)', det.source === 'deterministic', det.source)
+  assert('deterministic banner does NOT contain "Drafted with AI"', !draftBannerMessage(det.source).includes('Drafted with AI'), draftBannerMessage(det.source))
+  assert('deterministic banner explains AI was unavailable', /AI unavailable/i.test(draftBannerMessage(det.source)))
+  // A genuine AI response still says "Drafted with AI".
+  const aiFetch = async () => ({ ok: true, json: async () => ({ areas: [], summary: 'x', source: 'ai' }) })
+  const ai = await analyzeNarrative(baseReport, { fetchImpl: aiFetch, makeId: (k) => `sec_${k}` })
+  assert('an ai server response is labeled ai', ai.source === 'ai', ai.source)
+  assert('ai banner contains "Drafted with AI"', draftBannerMessage(ai.source).includes('Drafted with AI'))
+  // A response that omits source but did return stays 'ai' (backward compat).
+  const legacyFetch = async () => ({ ok: true, json: async () => ({ areas: [], summary: 'x' }) })
+  const legacy = await analyzeNarrative(baseReport, { fetchImpl: legacyFetch, makeId: (k) => `sec_${k}` })
+  assert('a source-less response is treated as ai (back-compat)', legacy.source === 'ai', legacy.source)
+}
+
+console.log('\n[31] deriveCondition: life-safety vocab, un-inverted positives, mild≠Poor, hedges stay N/A')
+{
+  const d = deriveCondition
+  // Bullet 1 — life-safety / compliance vocabulary that used to default to N/A.
+  assert('"overdue" -> Poor', d('the fire extinguisher tag is overdue') === 'Poor', d('the fire extinguisher tag is overdue'))
+  assert('"does not latch" -> Poor', d('the stairwell door does not latch') === 'Poor', d('the stairwell door does not latch'))
+  assert('"flickering" -> Poor', d('the exit sign is flickering') === 'Poor', d('the exit sign is flickering'))
+  assert('"needs immediate service" -> Poor', d('the panel needs immediate service') === 'Poor', d('the panel needs immediate service'))
+  assert('"deficiency" -> Poor', d('inspection noted a deficiency') === 'Poor', d('inspection noted a deficiency'))
+  // Bullet 2 — explicit positives that were inverted to N/A or Poor.
+  assert('"serviced ... running fine" -> Good (was N/A)', d('the unit was serviced in March and is running fine') === 'Good', d('the unit was serviced in March and is running fine'))
+  assert('"no signs of overheating or corrosion" -> Good (was Poor)', d('no signs of overheating or corrosion') === 'Good', d('no signs of overheating or corrosion'))
+  // Bullet 3 — mild wording must not auto-escalate to Poor.
+  assert('"worn ... drips steadily" -> Fair (not Poor)', d('the gasket is worn and the valve drips steadily') === 'Fair', d('the gasket is worn and the valve drips steadily'))
+  // Bullet 4 — hedged/unconfirmed language must not harden into Poor/Fair.
+  assert('"might be leaking" -> N/A (not Poor)', d('the water heater might be leaking') === 'N/A', d('the water heater might be leaking'))
+  assert('"possibly ... could not confirm" -> N/A (not Poor)', d('possibly some corrosion, not sure, could not confirm') === 'N/A', d('possibly some corrosion, not sure, could not confirm'))
+  // Guards — a stated rating still wins even when hedged elsewhere; negations hold.
+  assert('explicit "in poor condition" wins over a stray hedge', d('the wall is in poor condition but I could not confirm the cause') === 'Poor', d('the wall is in poor condition but I could not confirm the cause'))
+  assert('"free of rot and rust" -> Good (list-negation)', d('the beams are free of rot and rust') === 'Good', d('the beams are free of rot and rust'))
+  assert('a real leak still -> Poor', d('there is a leak here') === 'Poor')
+  assert('"no water damage" still N/A', d('no water damage was observed anywhere') === 'N/A')
+}
+
+console.log('\n[32] Auto-suggested (unconfirmed) ratings are flagged in PDF, DOCX, CSV, and JSON')
+{
+  const { buildSectionsCsv, buildJsonExport } = await import('../src/lib/exportData.js')
+  // Fresh, never-confirmed section (conditionEdited falsy) -> auto-suggested.
+  const secs = mergeSections([], segmentNarrative('the kitchen sink leaks'))
+  const model = buildExportModel({ ...baseReport, walkthrough: 'the kitchen sink leaks', sections: secs, summary: 'ok' })
+  const kitchen = model.sections.find((s) => s.key === 'kitchen')
+  assert('model marks the unconfirmed section autoSuggested', kitchen && kitchen.autoSuggested === true, kitchen && String(kitchen.autoSuggested))
+  const pdf = Buffer.from(await pdfToArrayBuffer(model)).toString('latin1')
+  assert('PDF flags the rating as auto-suggested', /auto-suggested/i.test(pdf))
+  const xml = unzipEntry(await docxToBuffer(model), 'word/document.xml')
+  assert('DOCX flags the rating as auto-suggested', /auto-suggested/i.test(xml))
+  const csv = buildSectionsCsv(model)
+  assert('CSV has an auto_suggested column', /,auto_suggested,/.test(csv))
+  assert('CSV marks the unconfirmed row auto_suggested = yes', /,Poor,yes,/.test(csv))
+  const json = buildJsonExport(model)
+  assert('JSON carries an autoSuggested key per section', json.sections.every((s) => 'autoSuggested' in s))
+  assert('JSON marks the unconfirmed section autoSuggested true', json.sections.find((s) => s.key === 'kitchen').autoSuggested === true)
+  // A CONFIRMED rating (conditionEdited) is NOT flagged, in any format.
+  const confirmed = buildExportModel({ ...baseReport, walkthrough: 'the kitchen sink leaks', sections: secs.map((s) => ({ ...s, conditionEdited: true })), summary: 'ok' })
+  assert('confirmed section is not autoSuggested', confirmed.sections.find((s) => s.key === 'kitchen').autoSuggested === false)
+  assert('confirmed PDF has no auto-suggested caveat', !/auto-suggested/i.test(Buffer.from(await pdfToArrayBuffer(confirmed)).toString('latin1')))
+  assert('confirmed DOCX has no auto-suggested caveat', !/auto-suggested/i.test(unzipEntry(await docxToBuffer(confirmed), 'word/document.xml')))
+  assert('confirmed CSV row marks auto_suggested = no', /,Poor,no,/.test(buildSectionsCsv(confirmed)))
+  // N/A carries no claim, so it is never flagged as auto-suggested.
+  const naModel = buildExportModel({ ...baseReport, sections: [{ id: 'sec_hall', key: 'hall', name: 'Hallway', condition: 'N/A', conditionEdited: false, photos: [] }], summary: '' })
+  assert('an N/A section is not auto-suggested', naModel.sections[0].autoSuggested === false)
+}
+
+console.log('\n[33] AI-resolved corrected area name syncs the already-created section title')
+{
+  // Narrative first names "break room"; /api/draft resolves the display name to
+  // "Kitchenette" via `renames`. The already-created section must adopt it so the
+  // header agrees with the AI summary — but the key/text/rating are untouched.
+  const rep = { ...baseReport, walkthrough: 'The break room sink is clean.', sections: [] }
+  const fetchImpl = async () => ({ ok: true, json: async () => ({
+    areas: [], summary: 'The kitchenette sink is clean.', source: 'ai',
+    renames: [{ from: 'break room', to: 'Kitchenette' }]
+  }) })
+  const { sections } = await analyzeNarrative(rep, { fetchImpl, makeId: (k) => `sec_${k}` })
+  const s = sections.find((x) => x.key === 'breakroom')
+  assert('section exists for the first-detected area', !!s)
+  assert('section name is the AI-resolved "Kitchenette", not "Break Room"', s && s.name === 'Kitchenette', s && s.name)
+  assert('rename leaves the key untouched', s && s.key === 'breakroom', s && s.key)
+  assert('rename leaves the text faithful/untouched', s && s.text === 'The break room sink is clean.', s && s.text)
+  // A user-edited name is NOT overwritten by an AI rename.
+  const rep2 = { ...baseReport, walkthrough: 'The break room sink is clean.', sections: [
+    { id: 'sec_breakroom', key: 'breakroom', area: 'Break Room', name: 'My Custom Name', text: 'The break room sink is clean.', condition: 'Good', photos: [], textEdited: false, conditionEdited: false, nameEdited: true, followUp: false }
+  ] }
+  const r2 = await analyzeNarrative(rep2, { fetchImpl, makeId: (k) => `sec_${k}` })
+  const s2 = r2.sections.find((x) => x.key === 'breakroom')
+  assert('user-edited name wins over the AI rename', s2 && s2.name === 'My Custom Name', s2 && s2.name)
+}
+
+console.log('\n[34] Re-draft summarizes CURRENT (edited) section text, not the stale raw narrative')
+{
+  // The inspector edited the Roof section to correct the dictation. A re-draft must
+  // send the corrected section text to the summary generator, not the original
+  // walkthrough, so the regenerated summary can't revert to contradicting the edit.
+  const edited = {
+    ...baseReport,
+    walkthrough: 'The roof is failing and needs replacement.',
+    sections: [{ id: 'sec_roof', key: 'roof', area: 'Roof', name: 'Roof',
+      text: 'The roof was recently replaced and is in good condition.', // inspector's correction
+      condition: 'Good', photos: [], textEdited: true, conditionEdited: true, nameEdited: false, followUp: false }]
+  }
+  let sent = null
+  const echoFetch = async (_url, opts) => {
+    sent = JSON.parse(opts.body).narrative
+    return { ok: true, json: async () => ({ areas: [], summary: `Summary: ${JSON.parse(opts.body).narrative}`, source: 'ai' }) }
+  }
+  const { summary } = await analyzeNarrative(edited, { fetchImpl: echoFetch, makeId: (k) => `sec_${k}` })
+  assert('AI request used the edited section text, not the raw narrative', sent && /recently replaced/.test(sent) && !/is failing/.test(sent), sent)
+  assert('regenerated summary reflects the inspector edit (not the stale dictation)', /recently replaced/.test(summary) && !/is failing/.test(summary), summary)
+  // With NO manual edits, the raw walkthrough is still the source (unchanged behavior).
+  let sent2 = null
+  const echo2 = async (_u, opts) => { sent2 = JSON.parse(opts.body).narrative; return { ok: true, json: async () => ({ areas: [], summary: 'ok', source: 'ai' }) } }
+  await analyzeNarrative({ ...baseReport, sections: [] }, { fetchImpl: echo2, makeId: (k) => `sec_${k}` })
+  assert('no edits -> the raw walkthrough is still sent verbatim', sent2 === baseReport.walkthrough, sent2)
+}
+
+console.log('\n[35] Segmentation: no tear on internal conjunctions; numbered instances stay distinct')
+{
+  // (a) A single sentence must NOT be torn at an internal "and" — even when an AI
+  // label makes "stairwell B" its own vocabulary entry, the clause stays intact.
+  const STAIR = 'Stairwell doors close and latch properly on floors one through eight; floor nine stairwell B door does not latch'
+  for (const labels of [[], ['stairwell b']]) {
+    const secs = segmentNarrative(STAIR, labels)
+    assert(`stairwell sentence is not torn at "and" (labels=${JSON.stringify(labels)})`, secs.length === 1, secs.map((s) => s.key).join(','))
+    assert('"close and latch properly" stays together (not orphaned)', secs[0] && /close and latch properly/.test(secs[0].text), secs[0] && secs[0].text)
+    assert('the floor-9 "does not latch" deficiency stays in the same section', secs[0] && /does not latch/.test(secs[0].text))
+    assert('stairwell slice stays faithful', secs.every((s) => faithful(STAIR, s.text)))
+  }
+  // (b) Two separately-numbered instances of one category are DISTINCT sections,
+  // neither losing its content.
+  const MECH = 'Mechanical room one has a leaking valve. Mechanical room two is dry and clean.'
+  const m = segmentNarrative(MECH)
+  assert('mechanical room one and two are two distinct sections', JSON.stringify(m.map((s) => s.key)) === JSON.stringify(['mechanicalroomone', 'mechanicalroomtwo']), m.map((s) => s.key).join(','))
+  const byK = Object.fromEntries(m.map((s) => [s.key, s]))
+  assert('room one keeps its own content, does not absorb room two', /leaking valve/.test(byK.mechanicalroomone.text) && !/dry and clean/.test(byK.mechanicalroomone.text))
+  assert('room two keeps its own content', /dry and clean/.test(byK.mechanicalroomtwo.text))
+  assert('both mechanical-room slices are faithful', m.every((s) => faithful(MECH, s.text)))
+  // Regression: a bare category with no numeral still yields ONE section.
+  const single = segmentNarrative('The mechanical room has a new pump.')
+  assert('an un-numbered mechanical room is a single section', single.length === 1 && single[0].key === 'mechanicalroom', single.map((s) => s.key).join(','))
+  // Regression: a genuine new-area "and" transition still splits.
+  const kr = segmentNarrative('the kitchen sink leaks and the roof is fine')
+  assert('a real "and the roof" transition still splits into two', JSON.stringify(kr.map((s) => s.key)) === JSON.stringify(['kitchen', 'roof']), kr.map((s) => s.key).join(','))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------

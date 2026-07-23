@@ -6,6 +6,7 @@
 
 import { buildExportModel } from './exportModel.js'
 import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+import { BRAND } from './brand.js'
 
 const NAVY = [28, 42, 58]
 const ACCENT = [46, 125, 166]
@@ -24,20 +25,47 @@ function condColor(condition) {
 export function renderPdfLines(reportOrModel) {
   const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const lines = []
-  lines.push({ text: 'ChiefEO Inspector', kind: 'brand' })
+  lines.push({ text: BRAND.name || 'ChiefEO Inspector', kind: 'brand' })
   lines.push({ text: model.header.title, kind: 'title' })
   lines.push({ text: `Property: ${model.header.property || '—'}`, kind: 'meta' })
   lines.push({ text: `Address: ${model.header.address || '—'}`, kind: 'meta' })
   lines.push({ text: `Inspector: ${model.header.inspector || '—'}`, kind: 'meta' })
   lines.push({ text: `Date: ${model.header.date || '—'}`, kind: 'meta' })
+  if (BRAND.licenseLine) lines.push({ text: BRAND.licenseLine, kind: 'meta' })
   if (model.summary) {
     lines.push({ text: 'Summary', kind: 'h2' })
     lines.push({ text: model.summary, kind: 'body' })
   }
+  // Coverage note: major systems the walkthrough never named. Placed up top so
+  // an owner sees the scope limits before reading area-by-area findings.
+  if (model.coverageGaps && model.coverageGaps.length) {
+    lines.push({ text: 'Coverage note', kind: 'h2' })
+    lines.push({
+      text: `This walkthrough did not mention the following major systems, so they are NOT covered by this report and should not be assumed to be in good condition: ${model.coverageGaps.join(', ')}.`,
+      kind: 'body'
+    })
+  }
   for (const section of model.sections) {
-    lines.push({ text: `${section.name} — ${section.condition}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key })
+    lines.push({ text: `${section.name} — ${section.condition}${section.autoSuggested ? ' (auto-suggested, not confirmed)' : ''}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key, followUp: !!section.followUp, autoSuggested: !!section.autoSuggested })
+    // An unconfirmed auto-derived rating is called out in-line so a reader never
+    // mistakes it for one the inspector verified (parity with the on-screen badge).
+    if (section.autoSuggested) lines.push({ text: 'Rating auto-suggested from the narrative — not confirmed by the inspector.', kind: 'autonote' })
     if (section.text) lines.push({ text: section.text, kind: 'note' })
     if (section.photoCount > 0) lines.push({ text: `${section.photoCount} photo(s) attached`, kind: 'photo', photos: section.photos })
+  }
+  // Punch list: one numbered line per follow-up item (flagged OR Poor — see
+  // exportModel.followUps), at the end where a contractor/vendor list normally
+  // lives. Exactly one 'followup' fragment per item, so the self-check can
+  // assert none are dropped or invented.
+  const flagged = model.followUps || model.sections.filter((s) => s.followUp)
+  if (flagged.length) {
+    lines.push({ text: 'Follow-up / Punch list', kind: 'h2' })
+    flagged.forEach((s, i) => {
+      lines.push({
+        text: `${i + 1}. ${s.name} (${s.condition})${s.text ? ` — ${s.text}` : ''}${s.photoCount ? ` [${s.photoCount} photo(s)]` : ''}`,
+        kind: 'followup', key: s.key
+      })
+    })
   }
   return lines
 }
@@ -59,7 +87,18 @@ async function buildPdfDoc(reportOrModel) {
   for (const ln of lines) {
     if (ln.kind === 'brand') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...ACCENT)
-      ensure(16); doc.text(ln.text, marginX, y); y += 20
+      ensure(16); doc.text(ln.text, marginX, y)
+      // Optional brand logo, top-right. Validated like section photos — bad
+      // data is skipped silently, never a broken export.
+      const lp = dataUrlParts(BRAND.logoDataUrl)
+      const lsize = lp && /image\/(png|jpe?g)/.test(lp.mime) && imageSize(dataUrlToBytes(BRAND.logoDataUrl))
+      if (lsize) {
+        try {
+          const { width, height } = fitBox(lsize, 96, 36)
+          doc.addImage(BRAND.logoDataUrl, lp.mime.includes('png') ? 'PNG' : 'JPEG', marginX + maxW - width, y - 12, width, height)
+        } catch (_e) { /* skip bad logo */ }
+      }
+      y += 20
     } else if (ln.kind === 'title') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(...NAVY)
       ensure(26); doc.text(ln.text, marginX, y); y += 28
@@ -79,15 +118,47 @@ async function buildPdfDoc(reportOrModel) {
       y += 10
       doc.setFont('helvetica', 'bold'); doc.setFontSize(13)
       ensure(18)
-      doc.setTextColor(...NAVY); doc.text(ln.sectionName, marginX, y)
       const [r, g, b] = condColor(ln.condition)
-      doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + doc.getTextWidth(ln.sectionName) + 8, y)
+      const condW = doc.getTextWidth(`  ${ln.condition}`) // measured at 13pt bold
+      // Reserve room for the inline FOLLOW-UP marker (drawn at 9pt) when the
+      // section is flagged, so name truncation accounts for it too.
+      let markerReserve = 0
+      if (ln.followUp) {
+        doc.setFontSize(9); markerReserve = 10 + doc.getTextWidth('FOLLOW-UP'); doc.setFontSize(13)
+      }
+      // A long (user-edited) section name would push the condition rating — and
+      // the FOLLOW-UP marker — past the right margin, printing them invisibly.
+      // Truncate the NAME with an ellipsis so the rating always stays on the
+      // page; the full name is still in the DOCX and on screen.
+      let name = ln.sectionName
+      if (doc.getTextWidth(name) + 8 + condW + markerReserve > maxW) {
+        while (name.length > 1 && doc.getTextWidth(`${name}…`) + 8 + condW + markerReserve > maxW) name = name.slice(0, -1)
+        name = `${name}…`
+      }
+      doc.setTextColor(...NAVY); doc.text(name, marginX, y)
+      const nameW = doc.getTextWidth(name)
+      doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + nameW + 8, y)
+      if (ln.followUp) {
+        // Inline marker so a flagged item is visible in place, not only on the
+        // punch list. Width computed at the 13pt bold metrics used above.
+        doc.setFontSize(9); doc.setTextColor(...ACCENT)
+        doc.text('FOLLOW-UP', marginX + nameW + 8 + condW + 10, y)
+      }
       y += 8
       doc.setDrawColor(227, 231, 236); doc.line(marginX, y, marginX + maxW, y); y += 12
+    } else if (ln.kind === 'followup') {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...NAVY)
+      const wrapped = doc.splitTextToSize(ln.text, maxW)
+      for (const w of wrapped) { ensure(14); doc.text(w, marginX, y); y += 14 }
+      y += 4
     } else if (ln.kind === 'note') {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED)
       const wrapped = doc.splitTextToSize(ln.text, maxW)
       for (const w of wrapped) { ensure(13); doc.text(w, marginX, y); y += 13 }
+    } else if (ln.kind === 'autonote') {
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8.5); doc.setTextColor(...ACCENT)
+      const wrapped = doc.splitTextToSize(ln.text, maxW)
+      for (const w of wrapped) { ensure(12); doc.text(w, marginX, y); y += 12 }
     } else if (ln.kind === 'photo') {
       const photos = ln.photos || []
       let px = marginX

@@ -5,9 +5,11 @@ import VoiceButton from './components/VoiceButton.jsx'
 import FeedbackWidget from './components/FeedbackWidget.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels, prefixHash, draftBannerMessage } from './lib/segment.js'
+import { coverageGaps } from './lib/exportModel.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
+import { downloadCsv, downloadJson } from './lib/exportData.js'
 import { saveReport, loadReport, clearReport, saveInspection, listSavedInspections, loadInspection, deleteInspection } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
@@ -189,13 +191,16 @@ export default function App() {
   const removeSection = (id) => {
     const target = report.sections.find((s) => s.id === id)
     if (!target) return
-    const hasWork = (target.photos || []).length > 0 || target.textEdited || target.nameEdited
-    if (hasWork && !window.confirm(`Remove "${target.name}"? Its photos and edits will be discarded.`)) return
+    const hasWork = (target.photos || []).length > 0 || target.textEdited || target.nameEdited || target.followUp
+    if (hasWork && !window.confirm(`Remove "${target.name}"? Its photos, edits, and follow-up flag will be discarded.`)) return
     setReport((r) => ({
       ...r,
       sections: r.sections.filter((s) => s.id !== id),
       // Record the removal so re-segmentation doesn't resurrect the section.
-      removedKeys: [...(r.removedKeys || []), { key: target.key, at: (r.walkthrough || '').length }]
+      // `h` fingerprints the narrative at removal time — if the user later
+      // clears/rewrites the walkthrough, the position rule no longer applies
+      // and mentioning the area again revives it (see effectiveRemovedKeys).
+      removedKeys: [...(r.removedKeys || []), { key: target.key, at: (r.walkthrough || '').length, h: prefixHash(r.walkthrough || '') }]
     }))
   }
 
@@ -216,7 +221,7 @@ export default function App() {
         // No current area → a General bucket (reuse if one already exists).
         idx = sections.findIndex((s) => s.key === 'general')
         if (idx < 0) {
-          sections.push({ id: sectionId('general'), key: 'general', area: 'General Observations', name: 'General Observations', text: '', condition: 'N/A', photos: [], textEdited: false, conditionEdited: false, nameEdited: false })
+          sections.push({ id: sectionId('general'), key: 'general', area: 'General Observations', name: 'General Observations', text: '', condition: 'N/A', photos: [], textEdited: false, conditionEdited: false, nameEdited: false, followUp: false })
           idx = sections.length - 1
         }
       }
@@ -226,14 +231,22 @@ export default function App() {
   }
 
   const onDraft = async () => {
+    // Drafting replaces the summary. If the user WROTE or edited the current
+    // one, confirm before discarding their words — sections update either way.
+    const keepUserSummary = !!(report.summaryEdited && (report.summary || '').trim()) &&
+      !window.confirm('Replace your edited summary with a newly drafted one? Your sections are updated either way.')
     setDrafting(true); setDraftMsg('')
     try {
       const { sections, summary, source, areas } = await analyzeNarrative(report, { makeId: sectionId })
       // Persist AI-proposed labels so they extend LIVE segmentation going forward.
-      setReport((r) => ({ ...r, sections, summary, aiAreas: areas || r.aiAreas }))
-      setDraftMsg(source === 'ai'
-        ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
-        : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
+      setReport((r) => ({
+        ...r,
+        sections,
+        summary: keepUserSummary ? r.summary : summary,
+        summaryEdited: keepUserSummary ? r.summaryEdited : false,
+        aiAreas: areas || r.aiAreas
+      }))
+      setDraftMsg(draftBannerMessage(source))
       track('draft_generated', { source: source === 'ai' ? 'ai' : 'deterministic' })
     } catch (_e) {
       setDraftMsg('Could not draft — please try again.')
@@ -241,10 +254,17 @@ export default function App() {
     } finally { setDrafting(false) }
   }
 
+  const hasExportContent = report.sections.length > 0 || !!(report.walkthrough || '').trim() || !!(report.summary || '').trim()
+  // The "nothing to export" guidance must not linger once the user HAS content
+  // — a stale warning next to live export buttons reads as broken.
+  useEffect(() => {
+    if (hasExportContent) setExportMsg((m) => (m.startsWith('Nothing to export') ? '' : m))
+  }, [hasExportContent])
+
   const onExport = async (kind) => {
     // A truly empty report exports as a blank page — confusing, not useful.
     // Point back to the walkthrough instead. Any content at all still exports.
-    if (!report.sections.length && !(report.walkthrough || '').trim() && !(report.summary || '').trim()) {
+    if (!hasExportContent) {
       setExportMsg('Nothing to export yet — dictate or type your walkthrough above and sections will appear.')
       return
     }
@@ -253,8 +273,10 @@ export default function App() {
     try {
       const base = (report.property || report.address || 'inspection').replace(/[^\w.-]+/g, '_').slice(0, 40)
       if (kind === 'pdf') await downloadPdf(report, `${base}.pdf`)
-      else await downloadDocx(report, `${base}.docx`)
-      track(kind === 'pdf' ? 'export_pdf' : 'export_docx')
+      else if (kind === 'docx') await downloadDocx(report, `${base}.docx`)
+      else if (kind === 'csv') await downloadCsv(report, base)
+      else await downloadJson(report, base)
+      track(`export_${kind}`)
     } catch (e) {
       // Shown at the export buttons (not the Draft card) so the user sees it.
       setExportMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
@@ -269,6 +291,13 @@ export default function App() {
   useEffect(() => { listSavedInspections().then(setSaved) }, [])
 
   const onSaveInspection = async () => {
+    // Guard against saving an empty report — same check the export flow uses
+    // (hasExportContent). Prevents junk library entries with 0 areas / 0 photos.
+    if (!hasExportContent) {
+      setLibMsg('Nothing to save yet — dictate or type your walkthrough above and sections will appear.')
+      track('error', { reason: 'inspection_save_empty' })
+      return
+    }
     let property = (report.property || '').trim()
     if (!property) {
       property = (window.prompt('Which property is this inspection for?') || '').trim()
@@ -296,6 +325,7 @@ export default function App() {
     setShowSaved(false)
     setLibMsg('')
     setDraftMsg('')
+    setExportMsg('') // message referred to the report this one just replaced
     track('inspection_opened')
   }
 
@@ -315,11 +345,38 @@ export default function App() {
   }, {})
 
   const onReset = async () => {
-    if (!window.confirm('Start a new inspection? This clears the current one.')) return
+    // Guard against silently discarding unsaved work. If there is anything on
+    // screen worth keeping, snapshot it to the saved-inspections library BEFORE
+    // clearing, so "+ New inspection" can never permanently lose an inspection.
+    const hasWork = report.sections.length > 0 || !!(report.walkthrough || '').trim() || !!(report.summary || '').trim()
+    let snapshotMsg = ''
+    if (hasWork) {
+      const proceed = window.confirm(
+        'Start a new inspection?\n\nYour current inspection will be saved to "Saved inspections" first so nothing is lost, then the screen will clear.'
+      )
+      if (!proceed) return
+      const snapId = await saveInspection(report)
+      if (snapId) {
+        setSaved(await listSavedInspections())
+        snapshotMsg = `Previous inspection saved under “${report.property || report.address || 'Untitled property'}.” Open it anytime from Saved inspections.`
+      } else {
+        // Snapshot failed (storage full / private mode): do NOT clear unsaved
+        // work — warn instead so the user can export a copy first.
+        setLibMsg('Couldn’t save the current inspection (storage may be full). Export a PDF or Word copy first, then start a new one.')
+        track('error', { reason: 'reset_snapshot_failed' })
+        return
+      }
+    }
     await clearReport()
     loaded.current = false
     setReport(newReport({ date: todayISO() }))
+    // Clear every transient message — a stale "Saved under …" / "Nothing to
+    // export yet" from the PREVIOUS inspection is misinformation on a fresh one.
+    // The one exception is the snapshot confirmation, which tells the user where
+    // their just-cleared work went, so keep it.
     setDraftMsg('')
+    setExportMsg('')
+    setLibMsg(snapshotMsg)
     loaded.current = true
   }
 
@@ -327,11 +384,26 @@ export default function App() {
   const named = report.sections.filter((s) => s.key !== 'general')
   // Tally the same set the "areas detected" count describes.
   const t = tallyConditions(named)
+  // Major systems the walkthrough never mentioned — shown as a coverage note so
+  // the free-form model's silence on a system isn't read as a clean bill.
+  const gaps = coverageGaps(report.walkthrough)
+  const flaggedCount = report.sections.filter((s) => s.followUp).length
   // The "screen" attached to feedback: this is a single-page app, so the
   // closest analog is the area currently under discussion (the last one
   // mentioned in the walkthrough), falling back to 'main'.
   const fbKey = lastMentionedKey(report.walkthrough || '', report.aiAreas || [])
   const fbScreen = (fbKey && (report.sections.find((s) => s.key === fbKey) || {}).name) || 'main'
+
+  // INS-03: which area the next "Add photo (to current area)" tap will file under.
+  // Mirrors addUnfiledPhoto: the last-mentioned area if it has a section, else the
+  // General Observations bucket (existing, or one that will be created on tap).
+  const photoTargetKey = (() => {
+    const key = lastMentionedKey(report.walkthrough || '', report.aiAreas || [])
+    if (key && report.sections.some((s) => s.key === key)) return key
+    return report.sections.some((s) => s.key === 'general') ? 'general' : null
+  })()
+  const photoTargetSection = photoTargetKey ? report.sections.find((s) => s.key === photoTargetKey) : null
+  const photoTargetName = photoTargetSection ? photoTargetSection.name : 'General Observations'
 
   return (
     <main className="page">
@@ -358,8 +430,8 @@ export default function App() {
           <button type="button" className="new-inspection-btn" onClick={onReset}>
             <span aria-hidden="true">+</span> New inspection
           </button>
-          <button type="button" className="new-inspection-btn" onClick={onSaveInspection}>
-            Save inspection
+          <button type="button" className="save-inspection-btn" onClick={onSaveInspection}>
+            <span aria-hidden="true">💾</span> Save inspection
           </button>
         </div>
       </header>
@@ -426,6 +498,7 @@ export default function App() {
         </div>
         <textarea
           className="walkthrough-text"
+          aria-label="Walkthrough narrative"
           value={report.walkthrough}
           onChange={(e) => setWalkthrough(e.target.value)}
           placeholder="e.g. Starting at the roof — recently replaced, no issues. In the kitchen, the countertops are worn and the faucet drips. The primary bath fan is loud…"
@@ -439,7 +512,7 @@ export default function App() {
           <span className="step-eyebrow">Sections</span>
           <h2 className="step-title">Detected from your walkthrough</h2>
           <p className="step-note">
-            {named.length} area{named.length === 1 ? '' : 's'} detected · {t.Good} Good / {t.Fair} Fair / {t.Poor} Poor / {t['N/A']} N/A
+            {named.length} area{named.length === 1 ? '' : 's'} detected · {t.Good} Good / {t.Fair} Fair / {t.Poor} Poor / {t['N/A']} N/A{flaggedCount > 0 ? ` · ${flaggedCount} flagged for follow-up` : ''}
           </p>
         </div>
 
@@ -448,13 +521,20 @@ export default function App() {
         ) : (
           <div className="areas">
             {report.sections.map((s) => (
-              <SectionCard key={s.id} section={s} onChange={(n) => setSection(s.id, n)} onRemove={() => removeSection(s.id)} />
+              <SectionCard key={s.id} section={s} current={s.key === photoTargetKey} onChange={(n) => setSection(s.id, n)} onRemove={() => removeSection(s.id)} />
             ))}
           </div>
         )}
 
+        {report.sections.length > 0 && gaps.length > 0 && (
+          <p className="coverage-note" role="note">
+            <strong>Not mentioned in this walkthrough:</strong> {gaps.join(', ')}. These major systems aren’t covered — say a word about each, or note that they weren’t inspected, before sharing this report.
+          </p>
+        )}
+
         <div className="unfiled-photo">
-          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo (to current area)</button>
+          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo</button>
+          <span className="unfiled-target" aria-live="polite">→ files under <strong>{photoTargetName}</strong></span>
           <input ref={unfiledRef} type="file" accept="image/*" multiple hidden
             onChange={(e) => { addUnfiledPhoto(e.target.files); e.target.value = '' }} />
         </div>
@@ -462,9 +542,11 @@ export default function App() {
 
       {/* Draft */}
       <section className="step step--generate">
-        <button className="generate-btn" onClick={onDraft} disabled={drafting}>
+        <button className="generate-btn" onClick={onDraft} disabled={drafting}
+          title="Sections and ratings already fill in as you talk — this AI-polishes them into a written summary and cleaner prose. Your observations, areas, and ratings are never changed.">
           {drafting ? 'Drafting…' : <><span aria-hidden="true">✨</span> Draft report</>}
         </button>
+        <p className="generate-hint">Sections and ratings already appear as you talk — this polishes them into a written summary and cleaner prose (observations, areas, and ratings stay as you left them).</p>
         {draftMsg && <p className="generate-msg generate-msg--info">{draftMsg}</p>}
       </section>
 
@@ -476,8 +558,9 @@ export default function App() {
         </div>
         <textarea
           className="summary-text"
+          aria-label="Overall summary"
           value={report.summary}
-          onChange={(e) => setHeader({ summary: e.target.value })}
+          onChange={(e) => setHeader({ summary: e.target.value, summaryEdited: true })}
           placeholder="Click “Draft report” to generate — or write your own. Fully editable."
           rows={4}
         />
@@ -496,14 +579,20 @@ export default function App() {
           <button className="export-btn export-btn--secondary" onClick={() => onExport('docx')} disabled={!!exporting}>
             {exporting === 'docx' ? 'Preparing DOCX…' : <><span aria-hidden="true">⬇</span> Editable Word (.docx)</>}
           </button>
+          <button className="export-btn export-btn--secondary" onClick={() => onExport('csv')} disabled={!!exporting}>
+            {exporting === 'csv' ? 'Preparing CSV…' : <><span aria-hidden="true">⬇</span> CSV (spreadsheet)</>}
+          </button>
+          <button className="export-btn export-btn--secondary" onClick={() => onExport('json')} disabled={!!exporting}>
+            {exporting === 'json' ? 'Preparing JSON…' : <><span aria-hidden="true">⬇</span> JSON (data)</>}
+          </button>
         </div>
         {exportMsg && <p className="generate-msg generate-msg--info">{exportMsg}</p>}
         <button type="button" className="reset-link" onClick={onReset}>Start new inspection</button>
       </section>
 
       <footer className="site-footer">
-        <p className="site-footer-line">ChiefEO Inspector · works offline · your notes and photos stay on this device.</p>
-        <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
+        <p className="site-footer-line">ChiefEO Inspector · works offline · your photos stay on this device. When you’re online, your typed/spoken notes are sent to our server only to suggest area labels and a summary — never your photos.</p>
+        <p className="site-footer-line site-footer-line--muted">Sections and their text are built only from what you said — the AI never invents observations or areas. Condition ratings are auto-suggested from your words (shown “auto-suggested” until you confirm), so review them before sharing.</p>
         <p className="site-footer-line site-footer-line--muted">{APP_VERSION}</p>
       </footer>
 
