@@ -59,6 +59,16 @@ body {
 }
 .save-inspection-btn:hover { background: var(--cta-hover); border-color: var(--cta-hover); }
 .masthead-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; }
+
+/* When signed in, the shared account menu renders a fixed avatar at the top-
+   right of the viewport. On narrow screens (where the page fills the width) it
+   would sit over the masthead's action buttons, so reserve a little clearance —
+   only when authed (the attribute is set live by InspectorAuth). No effect for
+   anonymous users, and none on wide screens where the centered page leaves the
+   viewport corner empty. */
+@media (max-width: 900px) {
+  html[data-chiefeo-authed] .masthead { padding-right: 46px; }
+}
 .masthead-msg { margin: -0.4rem 0 0.8rem; font-size: 0.85rem; color: var(--accent-ink); font-weight: 600; }
 
 /* Saved-inspections library */
