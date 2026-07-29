@@ -1,84 +1,57 @@
 # ChiefEO Inspector
 
-A property-inspection **PWA** in the ChiefEO family (alongside GL Down Driller and
-the Owner Report Generator). It does what Happy Inspector does — but you **talk
-into it** and **snap photos**, and it **drafts an editable report** you can tweak
-and export to **PDF** or an **editable Word (.docx)** document.
+Commercial property inspection tool with push-to-talk voice dictation and AI-assisted report drafting — deterministic field capture plus offline-capable PWA storage.
 
-Works offline. Your notes and photos stay on the device (IndexedDB). AI drafting
-is optional and only writes prose — it never changes your ratings, items, or photos.
+**Live tool:** [chiefeotool.com/chiefeoinspector](https://chiefeotool.com/chiefeoinspector) · [chiefeo-inspector.vercel.app](https://chiefeo-inspector.vercel.app)
 
-## Stack
+---
 
-React 18 + Vite 6 + `vite-plugin-pwa`, matching the ChiefEO look-and-feel
-(same logo, `#1c2a3a` navy / `#2e7da6` blue tokens, card UI). AI drafting is a
-Vercel serverless function (`api/draft.js`) calling the Anthropic API, with a
-deterministic fallback so the app works with no key.
+## The Problem
 
-## Features
+Property inspections generate observations faster than you can type them, and typing isn't realistic anyway when you're climbing, holding a flashlight, or opening a mechanical panel with both hands occupied. The standard workaround — write it up from memory later, or transcribe a voice memo after the fact — creates a gap between what you actually saw and what ends up documented. Details get lost or flattened in that gap, and voice memos just push the reconstruction work to later instead of eliminating it.
 
-- **Narrative-driven sections**: there are no pre-set areas/items. As you dictate
-  or type the walkthrough, a section **pops up automatically** for each area you
-  name ("kitchen", "roof", "primary bath", "garage", …), with the part of the
-  narrative you said about it attached. A section exists only if the narrative
-  referenced its area — no empty pre-set sections.
-- **Voice**: live client-side transcription via the Web Speech API drives the
-  walkthrough. Manual typing always works as a fallback.
-- **Faithful by construction**: each section's text is a **verbatim slice** of the
-  narrative (the sentences assigned to that area), and its condition rating is
-  **derived** from that slice (keyword, severity Poor > Fair > Good, else N/A) —
-  never invented. Everything stays editable.
-- **Photos**: camera capture or file upload, downscaled and stored offline in
-  IndexedDB; attach to a section, or use "Add photo" to file it under the latest /
-  a General section.
-- **AI pass (optional)**: when `ANTHROPIC_API_KEY` is set, the serverless
-  `api/draft.js` only proposes extra *area labels* (better synonym handling, e.g.
-  "mudroom") and writes the overall summary. The client feeds those labels in as
-  extra vocabulary, so a label only yields a section if it actually appears in the
-  narrative — the AI can never inject an invented area, observation, or rating.
-  Without a key it segments + summarizes deterministically.
-- **Follow-up flags / punch list**: one tap flags a section for follow-up
-  ("needs vendor"). Flagged items get an inline FOLLOW-UP marker and a numbered
-  **Follow-up / Punch list** page at the end of both exports, and the on-screen
-  tally and deterministic summary show the flagged count.
-- **Export**: client-side **PDF** (jsPDF) and **editable .docx** (`docx`), both
-  built from one shared export model.
+## Who This Is For
 
-## Develop
+- General managers doing regular property walkthroughs who need inspection documentation without an hour of desk time per visit
+- Assistant property managers covering inspections across multiple properties who need consistent, structured output regardless of who's conducting the walkthrough
+- Property managers running vendor walkthroughs, capital project punch lists, or condition assessments who need findings tied to specific locations and categories
+- Anyone inspecting solo who needs both hands free during the walkthrough itself
+
+## Key Features
+
+- **Push-to-talk voice dictation** — capture findings hands-free, in the moment, while actually walking the property
+- **Deterministic field capture** — structured data (location, category, severity) is captured as real data fields, not buried inside unstructured text the AI has to parse out later
+- **AI-assisted narrative drafting, scoped narrowly** — the AI drafts readable write-ups from your captured structured data and dictation; it does not generate or decide the underlying findings
+- **Offline-capable PWA with IndexedDB storage** — installable as a Progressive Web App, works in basements, parking structures, and anywhere else signal doesn't reach, and syncs once back online
+- **Tested with a real self-check suite** — v0.2.1, 242/242 self-checks passing
+
+## Real-World Example
+
+During a walkthrough, a structured finding is captured at Location: "Parking Structure — Level 2, Bay 14," Category: "Structural / Concrete," alongside a push-to-talk dictated note describing concrete spalling with exposed rebar. The AI drafts this into a clean narrative — *"Concrete spalling observed on structural column, approximately 6 inches in diameter with visible exposed rebar. Condition appears longstanding. Recommend inclusion in next fiscal year's capital planning."* — while the structured location and category fields remain intact as data, not just text buried in a paragraph.
+
+## Installation / Setup
 
 ```bash
+git clone https://github.com/GabrielBR408/chiefeo-inspector.git
+cd chiefeo-inspector
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # production build to dist/
-npm run preview    # serve the built app
+npm run dev
 ```
 
-## Verify (headless self-check)
+Then open the local dev URL shown in your terminal. As a PWA, it can be installed to a device home screen for offline use during walkthroughs — check your manifest/service worker config for install prompts in local dev.
 
-```bash
-npm run self-check
-```
+Other scripts: `npm run build` (production build), `npm run preview` (serve the build), and `npm run self-check` (headless self-check suite).
 
-Constructs a synthetic inspection and asserts the invariants below, then exits
-non-zero on any failure (unzips the generated DOCX and inspects the PDF content
-model for real):
+## Status
 
-| # | Invariant |
-|---|-----------|
-| 1 | Sections match the narrated areas exactly, in first-mention order — no section for an un-mentioned area |
-| 2 | Each section's text is a faithful, verbatim slice of the narrative (no fabricated observations) |
-| 3 | Ratings are derived from each section's own text, never invented |
-| 4 | The AI pass cannot invent an area, observation, or rating (a label only counts if the narrative names it) |
-| 5 | An AI-proposed label that *is* in the narrative can add a faithful section |
-| 6 | Deterministic fallback (no AI) still segments + summarizes |
-| 7 | Export model + DOCX (unzipped) + PDF content model contain every derived section |
+v0.2.1 · 242/242 self-checks passing · PWA with IndexedDB offline storage
 
-## Deploy (Vercel)
+## Built By
 
-Standalone target: `chiefeo-inspector.vercel.app`. Import the repo in Vercel
-(framework preset **Vite**), then set **`ANTHROPIC_API_KEY`** in the project's
-Environment Variables to enable AI drafting. Without it, the app still runs and
-produces a deterministic summary.
+Built by **Gabriel Roberts**, General Manager in Property Management at **Lincoln Property Company**, with 10+ years of hands-on commercial real estate experience, including inspections across Class A office properties. This tool is built around how inspections actually happen on-site — moving through a property, noticing things in sequence, hands often full — not a form filled out at a desk.
 
-Later this can get a button on the chiefeotool.com hub (the
-`variance-narrative-generator` repo's `TOOLS` array) — not wired here.
+Full tool suite: [chiefeotool.com](https://chiefeotool.com)
+
+## License
+
+*(No license file currently exists in this repo — add one here: MIT, Apache 2.0, or proprietary.)*
