@@ -13,6 +13,7 @@ import { downloadCsv, downloadJson } from './lib/exportData.js'
 import { saveReport, loadReport, clearReport, saveInspection, listSavedInspections, loadInspection, deleteInspection } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
+import ClaudeApiDisclosure from './components/ClaudeApiDisclosure.jsx'
 import { track } from './lib/track.js'
 
 // BRAND: absolute link back to the chiefeotool.com hub, shown at the top of the
@@ -52,6 +53,10 @@ export default function App() {
   const [report, setReport] = useState(() => newReport({ date: todayISO() }))
   const [drafting, setDrafting] = useState(false)
   const [draftMsg, setDraftMsg] = useState('')
+  // Compliance Phase 1: the Claude API notice is revealed by the AI action
+  // itself (see onDraft). Advisory only — it is set alongside the draft run,
+  // never in front of it, so drafting is never gated.
+  const [showClaudeNotice, setShowClaudeNotice] = useState(false)
   const [exporting, setExporting] = useState('')
   const [exportMsg, setExportMsg] = useState('')
   const [update, setUpdate] = useState(null)
@@ -231,6 +236,9 @@ export default function App() {
   }
 
   const onDraft = async () => {
+    // Enabling the AI pass is what sends notes to the API, so reveal the
+    // disclosure here — before the request, without holding it up.
+    setShowClaudeNotice(true)
     // Drafting replaces the summary. If the user WROTE or edited the current
     // one, confirm before discarding their words — sections update either way.
     const keepUserSummary = !!(report.summaryEdited && (report.summary || '').trim()) &&
@@ -548,6 +556,16 @@ export default function App() {
         </button>
         <p className="generate-hint">Sections and ratings already appear as you talk — this polishes them into a written summary and cleaner prose (observations, areas, and ratings stay as you left them).</p>
         {draftMsg && <p className="generate-msg generate-msg--info">{draftMsg}</p>}
+        {/* Compliance Phase 1: revealed by "Draft report" — the control that
+            turns on the AI pass — and rendered directly beneath it. Advisory
+            only; drafting proceeds regardless. */}
+        <ClaudeApiDisclosure
+          variant="action"
+          open={showClaudeNotice}
+          onClose={() => setShowClaudeNotice(false)}
+          storageKey="inspector_claude_warning_dismissed"
+          message="AI-assisted features send inspection notes to Claude API. Exclude confidential or sensitive data. See ToS §5.2"
+        />
       </section>
 
       {/* Summary */}
