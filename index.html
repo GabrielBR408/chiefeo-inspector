@@ -6,15 +6,77 @@
     <link rel="apple-touch-icon" href="/icons/icon-180.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1c2a3a" />
-    <title>ChiefEO Inspector</title>
-    <meta name="description" content="Talk-and-photo AI property inspection reports." />
+    <!-- ===== SEO: meta / Open Graph / Twitter / JSON-LD =====
+         Copy is the ChiefEO SEO package (meta_og_tags.md block 4 + schema_markup.md
+         block 4), mirrored from the hub landing page at
+         chiefeotool.com/tools/chiefeoinspector.
+         Canonical is the BRANDED production path chiefeotool.com/chiefeoinspector
+         (the vercel.json proxy target users actually hit) rather than this app's own
+         chiefeo-inspector.vercel.app origin — the .vercel.app origin is listed under
+         schema "sameAs" instead. NEEDS CONFIRMATION before this is indexed.
+         Replaced by the package copy: the prior title tag "ChiefEO Inspector", the prior
+         description / og:title / og:description ("Talk-and-photo AI property inspection
+         reports."), and the prior og:url (which carried a trailing slash).
+         KEPT as-is: og:image — it points at icons/icon-512.png, which really does exist
+         in this repo (public/icons/icon-512.png). -->
+    <title>ChiefEO Inspector — Property Inspection Tool | ChiefEO</title>
+    <meta name="description" content="Voice-dictated property inspections with AI-assisted drafting. Deterministic field capture keeps your data structured, not AI-hallucinated." />
+    <link rel="canonical" href="https://chiefeotool.com/chiefeoinspector" />
 
-    <meta property="og:title" content="ChiefEO Inspector" />
-    <meta property="og:description" content="Talk-and-photo AI property inspection reports." />
-    <meta property="og:image" content="https://chiefeotool.com/chiefeoinspector/icons/icon-512.png" />
-    <meta property="og:url" content="https://chiefeotool.com/chiefeoinspector/" />
     <meta property="og:type" content="website" />
+    <meta property="og:title" content="ChiefEO Inspector: Voice Inspections, Real Structure" />
+    <meta property="og:description" content="Push-to-talk inspection dictation with AI-assisted drafting on top of deterministic field capture. Works offline." />
+    <meta property="og:url" content="https://chiefeotool.com/chiefeoinspector" />
+    <meta property="og:site_name" content="ChiefEO" />
+    <meta property="og:image" content="https://chiefeotool.com/chiefeoinspector/icons/icon-512.png" />
+
     <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="ChiefEO Inspector: Voice Inspections, Real Structure" />
+    <meta name="twitter:description" content="Push-to-talk inspection dictation with AI-assisted drafting on top of deterministic field capture. Works offline." />
+    <meta name="twitter:image" content="https://chiefeotool.com/chiefeoinspector/icons/icon-512.png" />
+
+    <!-- schema "image" omitted: the package specifies
+         /images/chiefeo-inspector-screenshot.png, which does not exist in this repo.
+         "price": "0" is the package's assumption — confirm before this goes live. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "ChiefEO Inspector",
+      "description": "Commercial property inspection tool with push-to-talk voice dictation and AI-assisted report drafting. Deterministic field capture keeps the data structured while the LLM handles narrative drafting — built for walkthroughs on Class A office and mixed-use properties.",
+      "applicationCategory": "BusinessApplication",
+      "applicationSubCategory": "Commercial Real Estate Inspection Tool",
+      "operatingSystem": "Web, PWA (installable, works offline via IndexedDB)",
+      "browserRequirements": "Requires a modern browser with JavaScript enabled (Chrome, Edge, Firefox, Safari — current versions); installable as a Progressive Web App on desktop and mobile",
+      "softwareVersion": "0.2.1",
+      "url": "https://chiefeotool.com/chiefeoinspector",
+      "sameAs": [
+        "https://chiefeo-inspector.vercel.app",
+        "https://github.com/GabrielBR408/chiefeo-inspector"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "Gabriel Roberts",
+        "jobTitle": "General Manager, Property Management",
+        "worksFor": {
+          "@type": "Organization",
+          "name": "Lincoln Property Company"
+        },
+        "url": "https://www.linkedin.com/in/gabrielbroberts/"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Golden Real Estate Ventures and Exchanges LLC",
+        "url": "https://chiefeotool.com"
+      }
+    }
+    </script>
+    <!-- ===== end SEO block ===== -->
   </head>
   <body>
     <div id="root"></div>
