@@ -23,7 +23,7 @@ Property inspections generate observations faster than you can type them, and ty
 - **Deterministic field capture** — structured data (location, category, severity) is captured as real data fields, not buried inside unstructured text the AI has to parse out later
 - **AI-assisted narrative drafting, scoped narrowly** — the AI drafts readable write-ups from your captured structured data and dictation; it does not generate or decide the underlying findings
 - **Offline-capable PWA with IndexedDB storage** — installable as a Progressive Web App, works in basements, parking structures, and anywhere else signal doesn't reach, and syncs once back online
-- **Tested with a real self-check suite** — v0.2.1, 242/242 self-checks passing
+- **Tested with a real self-check suite** — v0.2.2, 242/242 self-checks passing
 
 ## Real-World Example
 
@@ -44,7 +44,7 @@ Other scripts: `npm run build` (production build), `npm run preview` (serve the 
 
 ## Status
 
-v0.2.1 · 242/242 self-checks passing · PWA with IndexedDB offline storage
+v0.2.2 · 242/242 self-checks passing · PWA with IndexedDB offline storage
 
 ## Built By
 
